@@ -114,6 +114,10 @@ async function route(hash) {
       case 'employees':
         await mountEmployees(app, session);
         break;
+      case 'employees/new':
+        // "New employee" is a modal on the list page; redirect a deep link.
+        navigate('employees');
+        return;
       case 'audit':
         await mountAudit(app);
         break;
