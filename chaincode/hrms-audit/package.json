@@ -1,0 +1,18 @@
+{
+  "name": "hrms-audit-chaincode",
+  "version": "1.0.0",
+  "description": "HRMS audit chaincode: append-only audit records with org authorization and in-contract hash chaining.",
+  "main": "index.js",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "start": "node node_modules/fabric-shim/cli.js start"
+  },
+  "dependencies": {
+    "fabric-contract-api": "^2.5.8",
+    "fabric-shim": "^2.5.8"
+  }
+}

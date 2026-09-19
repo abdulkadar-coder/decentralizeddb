@@ -1,0 +1,209 @@
+﻿# configtx.yaml - channel and ordering configuration for the permissioned
+# HR audit network (hyperledger-fabric via configtxgen).
+#
+# Channel: hrmsaudit - a single application channel joining HR, IT, Finance
+# and Administration organizations. Endorsement for chaincode transactions is
+# set at approval time (OutOf(2, ...)) - see scripts/deploy-chaincode.sh.
+
+Organizations:
+  - &OrdererOrg
+    Name: OrdererMSP
+    ID: OrdererMSP
+    MSPDir: ./organizations/ordererOrganizations/hrms.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrdererMSP.member')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrdererMSP.member')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrdererMSP.admin')"
+
+  - &HROrg
+    Name: HROrgMSP
+    ID: HROrgMSP
+    MSPDir: ./organizations/peerOrganizations/hr.hrms.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('HROrgMSP.admin', 'HROrgMSP.peer')"
+      Writers:
+        Type: Signature
+        Rule: "OR('HROrgMSP.admin')"
+      Admins:
+        Type: Signature
+        Rule: "OR('HROrgMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('HROrgMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.hr.hrms.com
+        Port: 7051
+
+  - &ITOrg
+    Name: ITOrgMSP
+    ID: ITOrgMSP
+    MSPDir: ./organizations/peerOrganizations/it.hrms.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('ITOrgMSP.admin', 'ITOrgMSP.peer')"
+      Writers:
+        Type: Signature
+        Rule: "OR('ITOrgMSP.admin')"
+      Admins:
+        Type: Signature
+        Rule: "OR('ITOrgMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('ITOrgMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.it.hrms.com
+        Port: 7051
+
+  - &FinanceOrg
+    Name: FinanceOrgMSP
+    ID: FinanceOrgMSP
+    MSPDir: ./organizations/peerOrganizations/finance.hrms.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('FinanceOrgMSP.admin', 'FinanceOrgMSP.peer')"
+      Writers:
+        Type: Signature
+        Rule: "OR('FinanceOrgMSP.admin')"
+      Admins:
+        Type: Signature
+        Rule: "OR('FinanceOrgMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('FinanceOrgMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.finance.hrms.com
+        Port: 7051
+
+  - &AdminOrg
+    Name: AdminOrgMSP
+    ID: AdminOrgMSP
+    MSPDir: ./organizations/peerOrganizations/admin.hrms.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('AdminOrgMSP.admin', 'AdminOrgMSP.peer')"
+      Writers:
+        Type: Signature
+        Rule: "OR('AdminOrgMSP.admin')"
+      Admins:
+        Type: Signature
+        Rule: "OR('AdminOrgMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('AdminOrgMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.admin.hrms.com
+        Port: 7051
+
+Capabilities:
+  Channel: &ChannelCapabilities
+    V2_0: true
+  Orderer: &OrdererCapabilities
+    V2_0: true
+  Application: &ApplicationCapabilities
+    V2_5: true
+
+Application: &ApplicationDefaults
+  Organizations:
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    LifecycleEndorsement:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Endorsement"
+    Endorsement:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Endorsement"
+
+Orderer: &OrdererDefaults
+  OrdererType: etcdraft
+  Addresses:
+    - orderer.hrms.com:7050
+  EtcdRaft:
+    Consenters:
+      - Host: orderer.hrms.com
+        Port: 7050
+        ClientTLSCert: ./organizations/ordererOrganizations/hrms.com/orderers/orderer.hrms.com/tls/server.crt
+        ServerTLSCert: ./organizations/ordererOrganizations/hrms.com/orderers/orderer.hrms.com/tls/server.crt
+  BatchTimeout: 2s
+  BatchSize:
+    MaxMessageCount: 10
+    AbsoluteMaxBytes: 99 MB
+    PreferredMaxBytes: 512 KB
+  Organizations:
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    BlockValidation:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+
+Channel: &ChannelDefaults
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+  Capabilities:
+    <<: *ChannelCapabilities
+
+# The genesis block for the ordering service.
+Profiles:
+  HRMSAuditGenesis:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Organizations:
+        - *OrdererOrg
+      Capabilities:
+        <<: *OrdererCapabilities
+    Consortiums:
+      HRMSAuditConsortium:
+        Organizations:
+          - *HROrg
+          - *ITOrg
+          - *FinanceOrg
+          - *AdminOrg
+
+  # The application channel joining the four organizations.
+  HRMSAuditChannel:
+    <<: *ChannelDefaults
+    Consortium: HRMSAuditConsortium
+    Application:
+      <<: *ApplicationDefaults
+      Organizations:
+        - *HROrg
+        - *ITOrg
+        - *FinanceOrg
+        - *AdminOrg
+      Capabilities:
+        <<: *ApplicationCapabilities

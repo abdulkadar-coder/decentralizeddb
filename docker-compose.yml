@@ -1,0 +1,62 @@
+
+# ============================================================================
+# Production-oriented ZeroTrust HRMS - Phase 1
+# Local development with MinIO object storage and the API via Docker Compose.
+#
+#   docker compose up --build
+#
+# The app and MinIO both run in Docker. Secrets below are DEVELOPMENT-ONLY
+# placeholders; replace them (and never commit real secrets) before any
+# non-local deployment. Generate real values with:
+#   openssl rand -base64 48   # JWT secret
+#   openssl rand -base64 32   # MASTER_KEY
+# ============================================================================
+
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-hrms_dev_access}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-hrms_dev_secret}
+    volumes:
+      - minio_data:/data
+
+  app:
+    build: .
+    depends_on:
+      minio:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: 3000
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-change-me}
+      MASTER_KEY: ${MASTER_KEY:-ZGV2LW9ubHktbWFzdGVyLWtleS0yNTYtYml0c3M=}
+      STORAGE_BACKEND: minio
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-hrms_dev_access}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-hrms_dev_secret}
+      MINIO_BUCKET: hrms-documents
+      BLOCKCHAIN_BACKEND: sqlite
+      DATA_DIR: /app/data
+      DB_FILE: /app/data/hrms.db
+      FS_STORAGE_ROOT: /app/data/objects
+    volumes:
+      - app_data:/app/data
+
+volumes:
+  minio_data:
+  app_data:

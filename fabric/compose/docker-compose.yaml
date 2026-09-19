@@ -1,0 +1,200 @@
+# docker-compose.yaml - local permissioned audit network (dev/CI only).
+#
+# Topology: 1 Raft orderer node + 1 peer per organization (HR/IT/Finance/Admin).
+# Organizations are represented as separate Peers with distinct MSPs. Running
+# them as separate containers does NOT by itself guarantee organizational
+# independence on a shared host - see docs/PHASE2_NETWORK_DESIGN.md.
+
+networks:
+  fabric_hrms:
+    name: fabric_hrms
+
+services:
+
+  orderer.hrms.com:
+    container_name: orderer.hrms.com
+    image: hyperledger/fabric-orderer:2.5.15
+    environment:
+      - FABRIC_CFG_PATH=/etc/hyperledger/fabric
+      - ORDERER_GENERAL_LOGLEVEL=info
+      - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
+      - ORDERER_GENERAL_LISTENPORT=7050
+      - ORDERER_GENERAL_LOCALMSPID=OrdererMSP
+      - ORDERER_GENERAL_LOCALMSPDIR=/etc/hyperledger/fabric/msp
+      - ORDERER_GENERAL_TLS_ENABLED=true
+      - ORDERER_GENERAL_TLS_PRIVATEKEY=/etc/hyperledger/fabric/tls/server.key
+      - ORDERER_GENERAL_TLS_CERTIFICATE=/etc/hyperledger/fabric/tls/server.crt
+      - ORDERER_GENERAL_TLS_ROOTCAS=[/etc/hyperledger/fabric/tls/ca.crt]
+      - ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE=/etc/hyperledger/fabric/tls/server.crt
+      - ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY=/etc/hyperledger/fabric/tls/server.key
+      - ORDERER_GENERAL_CLUSTER_ROOTCAS=[/etc/hyperledger/fabric/tls/ca.crt]
+      - ORDERER_GENERAL_BOOTSTRAPMETHOD=file
+      - ORDERER_GENERAL_BOOTSTRAPFILE=/var/hyperledger/orderer/orderer.genesis.block
+      - ORDERER_ADMIN_TLSENABLED=true
+      - ORDERER_ADMIN_LISTENADDRESS=0.0.0.0:7053
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric
+    volumes:
+      - ../organizations/ordererOrganizations/hrms.com/orderers/orderer.hrms.com/msp:/etc/hyperledger/fabric/msp
+      - ../organizations/ordererOrganizations/hrms.com/orderers/orderer.hrms.com/tls:/etc/hyperledger/fabric/tls
+      - ../system-genesis-block/genesis.block:/var/hyperledger/orderer/orderer.genesis.block
+    ports:
+      - "7050:7050"
+      - "7053:7053"
+    networks:
+      - fabric_hrms
+
+  peer0.hr.hrms.com:
+    container_name: peer0.hr.hrms.com
+    image: hyperledger/fabric-peer:2.5.15
+    environment:
+      - FABRIC_CFG_PATH=/etc/hyperledger/fabric
+      - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=fabric_hrms
+      - CORE_PEER_ID=peer0.hr.hrms.com
+      - CORE_PEER_LOCALMSPID=HROrgMSP
+      - CORE_PEER_ADDRESS=peer0.hr.hrms.com:7051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:7051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.hr.hrms.com:7052
+      - CORE_PEER_CHAINCODELISTENADDRESS=0.0.0.0:7052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.hr.hrms.com:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.hr.hrms.com:7051
+      - CORE_PEER_GOSSIP_USELEADERELECTION=true
+      - CORE_PEER_GOSSIP_ORGLEADER=false
+      - CORE_PEER_MSPCONFIGPATH=/etc/hyperledger/fabric/msp
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/tls/ca.crt
+      - CORE_PEER_TLS_CERT_FILE=/etc/hyperledger/fabric/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/etc/hyperledger/fabric/tls/server.key
+      - CORE_OPERATIONS_LISTENADDRESS=0.0.0.0:9443
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - ../organizations/peerOrganizations/hr.hrms.com/peers/peer0.hr.hrms.com/msp:/etc/hyperledger/fabric/msp
+      - ../organizations/peerOrganizations/hr.hrms.com/peers/peer0.hr.hrms.com/tls:/etc/hyperledger/fabric/tls
+      - ../organizations/peerOrganizations/hr.hrms.com/users:/etc/hyperledger/fabric/users
+      - ../chaincode:/opt/chaincode
+    ports:
+      - "7051:7051"
+      - "7052:7052"
+      - "9443:9443"
+    depends_on:
+      - orderer.hrms.com
+    networks:
+      - fabric_hrms
+
+  peer0.it.hrms.com:
+    container_name: peer0.it.hrms.com
+    image: hyperledger/fabric-peer:2.5.15
+    environment:
+      - FABRIC_CFG_PATH=/etc/hyperledger/fabric
+      - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=fabric_hrms
+      - CORE_PEER_ID=peer0.it.hrms.com
+      - CORE_PEER_LOCALMSPID=ITOrgMSP
+      - CORE_PEER_ADDRESS=peer0.it.hrms.com:7051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:7051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.it.hrms.com:7052
+      - CORE_PEER_CHAINCODELISTENADDRESS=0.0.0.0:7052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.it.hrms.com:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.it.hrms.com:7051
+      - CORE_PEER_GOSSIP_USELEADERELECTION=true
+      - CORE_PEER_GOSSIP_ORGLEADER=false
+      - CORE_PEER_MSPCONFIGPATH=/etc/hyperledger/fabric/msp
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/tls/ca.crt
+      - CORE_PEER_TLS_CERT_FILE=/etc/hyperledger/fabric/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/etc/hyperledger/fabric/tls/server.key
+      - CORE_OPERATIONS_LISTENADDRESS=0.0.0.0:9444
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - ../organizations/peerOrganizations/it.hrms.com/peers/peer0.it.hrms.com/msp:/etc/hyperledger/fabric/msp
+      - ../organizations/peerOrganizations/it.hrms.com/peers/peer0.it.hrms.com/tls:/etc/hyperledger/fabric/tls
+      - ../organizations/peerOrganizations/it.hrms.com/users:/etc/hyperledger/fabric/users
+      - ../chaincode:/opt/chaincode
+    ports:
+      - "7151:7051"
+      - "7152:7052"
+      - "9444:9443"
+    depends_on:
+      - orderer.hrms.com
+    networks:
+      - fabric_hrms
+
+  peer0.finance.hrms.com:
+    container_name: peer0.finance.hrms.com
+    image: hyperledger/fabric-peer:2.5.15
+    environment:
+      - FABRIC_CFG_PATH=/etc/hyperledger/fabric
+      - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=fabric_hrms
+      - CORE_PEER_ID=peer0.finance.hrms.com
+      - CORE_PEER_LOCALMSPID=FinanceOrgMSP
+      - CORE_PEER_ADDRESS=peer0.finance.hrms.com:7051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:7051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.finance.hrms.com:7052
+      - CORE_PEER_CHAINCODELISTENADDRESS=0.0.0.0:7052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.finance.hrms.com:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.finance.hrms.com:7051
+      - CORE_PEER_GOSSIP_USELEADERELECTION=true
+      - CORE_PEER_GOSSIP_ORGLEADER=false
+      - CORE_PEER_MSPCONFIGPATH=/etc/hyperledger/fabric/msp
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/tls/ca.crt
+      - CORE_PEER_TLS_CERT_FILE=/etc/hyperledger/fabric/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/etc/hyperledger/fabric/tls/server.key
+      - CORE_OPERATIONS_LISTENADDRESS=0.0.0.0:9445
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - ../organizations/peerOrganizations/finance.hrms.com/peers/peer0.finance.hrms.com/msp:/etc/hyperledger/fabric/msp
+      - ../organizations/peerOrganizations/finance.hrms.com/peers/peer0.finance.hrms.com/tls:/etc/hyperledger/fabric/tls
+      - ../organizations/peerOrganizations/finance.hrms.com/users:/etc/hyperledger/fabric/users
+      - ../chaincode:/opt/chaincode
+    ports:
+      - "7251:7051"
+      - "7252:7052"
+      - "9445:9443"
+    depends_on:
+      - orderer.hrms.com
+    networks:
+      - fabric_hrms
+
+  peer0.admin.hrms.com:
+    container_name: peer0.admin.hrms.com
+    image: hyperledger/fabric-peer:2.5.15
+    environment:
+      - FABRIC_CFG_PATH=/etc/hyperledger/fabric
+      - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=fabric_hrms
+      - CORE_PEER_ID=peer0.admin.hrms.com
+      - CORE_PEER_LOCALMSPID=AdminOrgMSP
+      - CORE_PEER_ADDRESS=peer0.admin.hrms.com:7051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:7051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.admin.hrms.com:7052
+      - CORE_PEER_CHAINCODELISTENADDRESS=0.0.0.0:7052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.admin.hrms.com:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.admin.hrms.com:7051
+      - CORE_PEER_GOSSIP_USELEADERELECTION=true
+      - CORE_PEER_GOSSIP_ORGLEADER=false
+      - CORE_PEER_MSPCONFIGPATH=/etc/hyperledger/fabric/msp
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/tls/ca.crt
+      - CORE_PEER_TLS_CERT_FILE=/etc/hyperledger/fabric/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/etc/hyperledger/fabric/tls/server.key
+      - CORE_OPERATIONS_LISTENADDRESS=0.0.0.0:9446
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - ../organizations/peerOrganizations/admin.hrms.com/peers/peer0.admin.hrms.com/msp:/etc/hyperledger/fabric/msp
+      - ../organizations/peerOrganizations/admin.hrms.com/peers/peer0.admin.hrms.com/tls:/etc/hyperledger/fabric/tls
+      - ../organizations/peerOrganizations/admin.hrms.com/users:/etc/hyperledger/fabric/users
+      - ../chaincode:/opt/chaincode
+    ports:
+      - "7351:7051"
+      - "7352:7052"
+      - "9446:9443"
+    depends_on:
+      - orderer.hrms.com
+    networks:
+      - fabric_hrms

@@ -1,0 +1,45 @@
+# crypto-config.yaml - cryptogen input for the local permissioned audit network.
+#
+# Generated certificates are DEV-ONLY material for a local test network.
+# Production deployment must use a real Fabric CA per organization (see
+# fabric/README.md and docs/PHASE2_NETWORK_DESIGN.md). No production use.
+
+OrdererOrgs:
+  - Name: Orderer
+    Domain: hrms.com
+    EnableNodeOUs: true
+    Specs:
+      - Hostname: orderer
+
+PeerOrgs:
+  - Name: HROrg
+    Domain: hr.hrms.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+    Users:
+      Count: 1
+
+  - Name: ITOrg
+    Domain: it.hrms.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+    Users:
+      Count: 1
+
+  - Name: FinanceOrg
+    Domain: finance.hrms.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+    Users:
+      Count: 1
+
+  - Name: AdminOrg
+    Domain: admin.hrms.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1
+    Users:
+      Count: 1
