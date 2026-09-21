@@ -10,6 +10,7 @@ import { AuditService } from './modules/audit/service.js';
 import { AuthService } from './modules/auth/service.js';
 import { EmployeesService } from './modules/employees/service.js';
 import { DocumentsService } from './modules/documents/service.js';
+import { UsersService } from './modules/users/service.js';
 
 export interface AppContext {
   config: AppConfig;
@@ -22,6 +23,7 @@ export interface AppContext {
   auth: AuthService;
   employees: EmployeesService;
   documents: DocumentsService;
+  users: UsersService;
   close: () => void;
 }
 
@@ -39,6 +41,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   const auth = new AuthService(db, audits, { jwtSecret: config.jwtSecret, tokenTtlSeconds: 3600 });
   const employees = new EmployeesService(db, audits);
   const documents = new DocumentsService(db, config, storage, keys, audits);
+  const users = new UsersService(db);
 
   return {
     config,
@@ -51,6 +54,7 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     auth,
     employees,
     documents,
+    users,
     close: () => {
       ledger?.close();
       db.close();

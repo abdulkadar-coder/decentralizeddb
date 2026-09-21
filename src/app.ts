@@ -9,6 +9,7 @@ import { authRoutes } from './routes/auth.routes.js';
 import { employeeRoutes } from './routes/employees.routes.js';
 import { documentRoutes } from './routes/documents.routes.js';
 import { auditRoutes } from './routes/audit.routes.js';
+import { userRoutes } from './routes/users.routes.js';
 import { notFoundHandler, errorHandler } from './errors.js';
 
 const PUBLIC_DIR = join(PROJECT_ROOT, 'public');
@@ -67,6 +68,7 @@ export function createApp(ctx: AppContext): Express {
         '/api/employees',
         '/api/employees/:id/documents',
         '/api/audit/*',
+        '/api/users',
       ],
       ui: 'same-origin single-page app under /',
     });
@@ -77,6 +79,7 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/employees', employeeRoutes(ctx));
   app.use('/api/employees', documentRoutes(ctx));
   app.use('/api/audit', auditRoutes(ctx));
+  app.use('/api/users', userRoutes(ctx));
   app.use(notFoundHandler);
   app.use(errorHandler);
 

@@ -11,6 +11,7 @@ import { mountDashboard } from './views/dashboard.js';
 import { mountEmployees } from './views/employees.js';
 import { mountEmployee } from './views/employee.js';
 import { mountAudit } from './views/audit.js';
+import { mountUsers } from './views/users.js';
 
 const app = document.getElementById('app');
 const topbar = document.getElementById('topbar');
@@ -21,6 +22,7 @@ function roleNav(user) {
     { path: 'employees', label: 'Employees' },
   ];
   if (user && user.role !== 'EMPLOYEE') items.push({ path: 'audit', label: 'Audit' });
+  if (user && user.role === 'ADMIN') items.push({ path: 'users', label: 'Users' });
   const current = currentPath();
   return items
     .map((it) => {
@@ -120,6 +122,9 @@ async function route(hash) {
         return;
       case 'audit':
         await mountAudit(app);
+        break;
+      case 'users':
+        await mountUsers(app);
         break;
       default: {
         const m = /^employees\/([^/]+)$/.exec(path);
