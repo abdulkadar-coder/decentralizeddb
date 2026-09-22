@@ -8,6 +8,12 @@ const CAPABILITIES = {
   EMPLOYEE: ['Manage your own record', 'Upload and download your own documents'],
 };
 
+const INTROS = {
+  ADMIN: 'Full control: employees, documents, roles, and the audit ledger.',
+  MANAGER: 'Team access: your own record and your direct reports.',
+  EMPLOYEE: 'Self-service access to your own record and documents.',
+};
+
 async function safe(fn) {
   try {
     return await fn();
@@ -19,6 +25,7 @@ async function safe(fn) {
 export async function mountDashboard(container, session) {
   pageLoading(container);
   const role = session.user.role;
+  const name = session.user.displayName || session.user.username;
 
   const [health, chain, network, list] = await Promise.all([
     safe(() => api.get('/api/health')),
@@ -28,43 +35,90 @@ export async function mountDashboard(container, session) {
   ]);
 
   const employeeCount = list && Array.isArray(list.employees) ? list.employees.length : null;
+  const serviceOk = !!health && health.status === 'ok';
+  const chainOk = chain ? chain.valid : null;
+  const fabricEnabled = !!(network && network.enabled);
+
+  const stats = [];
+  stats.push(`<div class="stat">
+    <div class="stat-label">Role</div>
+    <div class="stat-num">${escapeHtml(role)}</div>
+    <div class="stat-sub">${CAPABILITIES[role] ? CAPABILITIES[role].length : 0} capabilities</div>
+  </div>`);
+  stats.push(`<div class="stat ${serviceOk ? 'tone-green' : 'tone-muted'}">
+    <div class="stat-label">Service</div>
+    <div class="stat-num ${serviceOk ? 'ok' : 'danger'}">${serviceOk ? 'OK' : 'DOWN'}</div>
+    <div class="stat-sub">${health ? `${escapeHtml(String(health.db ?? ''))} · ${escapeHtml(String(health.storage ?? ''))}` : 'unavailable'}</div>
+  </div>`);
+
+  if (role === 'ADMIN') {
+    stats.push(`<div class="stat tone-green">
+      <div class="stat-label">Employees</div>
+      <div class="stat-num">${employeeCount == null ? '—' : employeeCount}</div>
+      <div class="stat-sub">in the directory</div>
+    </div>`);
+  }
+  if (role !== 'EMPLOYEE') {
+    stats.push(`<div class="stat ${chainOk === null ? 'tone-muted' : chainOk ? 'tone-green' : ''}">
+      <div class="stat-label">Audit chain</div>
+      <div class="stat-num ${chainOk === null ? 'muted' : chainOk ? 'ok' : 'danger'}">${chainOk === null ? '—' : chain.length}</div>
+      <div class="stat-sub">${chainOk === null ? 'unavailable' : chainOk ? 'hash chain intact' : 'hash chain breached'}</div>
+    </div>`);
+    stats.push(`<div class="stat ${fabricEnabled ? 'tone-peri' : 'tone-muted'}">
+      <div class="stat-label">Fabric ledger</div>
+      <div class="stat-num sm ${fabricEnabled ? (network.connected ? 'ok' : 'danger') : 'muted'}">${fabricEnabled ? (network.connected ? 'UP' : 'DOWN') : 'OFF'}</div>
+      <div class="stat-sub">${fabricEnabled ? `sequence ${network.seq}` : 'set LEDGER_BACKEND=fabric'}</div>
+    </div>`);
+  } else {
+    stats.push(`<div class="stat ${session.user.employeeId ? 'tone-green' : 'tone-muted'}">
+      <div class="stat-label">My record</div>
+      <div class="stat-num sm ${session.user.employeeId ? 'ok' : 'muted'}">${session.user.employeeId ? 'LINKED' : '—'}</div>
+      <div class="stat-sub">${session.user.employeeId ? 'ready to manage' : 'not linked yet'}</div>
+    </div>`);
+  }
 
   render(container, `
     <div class="page">
-      <div class="page-head">
-        <div>
-          <h1>Dashboard</h1>
-          <div class="sub">Signed in as ${escapeHtml(session.user.displayName || session.user.username)} · ${role}</div>
+      <div class="band">
+        <div class="band-inner">
+          <span class="z-logo" aria-hidden="true">Z</span>
+          <div class="band-copy">
+            <span class="auth-kicker">zero-trust workspace</span>
+            <h1>Good to see you, ${escapeHtml(name)}.</h1>
+            <p class="band-sub">${INTROS[role]}</p>
+          </div>
         </div>
-        <div class="chip-row">
+        <div class="chip-row band-actions">
           ${session.user.employeeId ? link(`employees/${session.user.employeeId}`, 'My employee record', 'btn secondary small') : ''}
           ${link('employees', 'Employees', 'btn secondary small')}
           ${role !== 'EMPLOYEE' ? link('audit', 'Audit ledger', 'btn secondary small') : ''}
         </div>
       </div>
 
+      <div class="grid stats">${stats.join('')}</div>
+
       <div class="grid cols-3">
         <div class="panel">
-          <h2>Your role</h2>
-          <ul style="margin:0;padding-left:18px">
-            ${CAPABILITIES[role] ? CAPABILITIES[role].map((c) => `<li>${escapeHtml(c)}</li>`).join('') : ''}
+          <h2>What you can do</h2>
+          <ul class="check-list">
+            ${CAPABILITIES[role] ? CAPABILITIES[role].map((c) => `<li>${escapeHtml(c)}</li>`).join('') : '<li>No capabilities defined for this role.</li>'}
           </ul>
         </div>
 
         <div class="panel">
           <h2>Service health</h2>
           <div class="kv">
-            <dt>Status</dt><dd>${health && health.status === 'ok' ? '<span class="badge ok">OK</span>' : '<span class="badge danger">degraded</span>'}</dd>
-            <dt>Database</dt><dd>${health ? escapeHtml(health.db) : 'unavailable'}</dd>
+            <dt>Status</dt><dd>${serviceOk ? '<span class="badge ok">OK</span>' : '<span class="badge danger">degraded</span>'}</dd>
+            <dt>Database</dt><dd>${health ? escapeHtml(String(health.db ?? '')) : 'unavailable'}</dd>
             <dt>Storage backend</dt><dd>${health ? escapeHtml(String(health.storage ?? '')) : 'unavailable'}</dd>
-            <dt>Audit chain</dt><dd>${health && health.blockchain ? `<span class="small muted">${escapeHtml(health.blockchain.backend ?? '')}</span>` : '—'}</dd>
+            <dt>Audit chain</dt><dd>${health && health.blockchain ? `<span class="small muted">${escapeHtml(String(health.blockchain.backend ?? ''))}</span>` : '—'}</dd>
           </div>
         </div>
 
         ${role === 'ADMIN'
           ? `<div class="panel">
               <h2>Employees</h2>
-              <div style="font-size:34px;font-weight:700">${employeeCount == null ? '—' : employeeCount}</div>
+              <div class="stat-num">${employeeCount == null ? '—' : employeeCount}</div>
               <div class="muted small">visible to ADMIN</div>
               <div class="mt">${link('employees', 'Open employee directory')}</div>
             </div>`
