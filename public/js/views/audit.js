@@ -2,8 +2,6 @@ import { api } from '../api.js';
 import { render, pageLoading, escapeHtml, fmtDate, emptyState } from '../util.js';
 import { link } from '../router.js';
 
-const RAIL_LIMIT = 12;
-
 export async function mountAudit(container) {
   pageLoading(container);
 
@@ -14,54 +12,14 @@ export async function mountAudit(container) {
   ]);
   const [network, chain, validation] = res.map((r) => (r.status === 'fulfilled' ? r.value : { error: r.reason }));
 
-  const chainBlocks = chain && !chain.error && Array.isArray(chain.blocks) ? chain.blocks : [];
-  const brokenHeights = validation && !validation.error && validation.validation && Array.isArray(validation.validation.issues)
-    ? new Set(validation.validation.issues.map((i) => i.height))
-    : new Set();
-
   render(container, `
     <div class="page">
-      <div class="band">
-        <div class="band-inner">
-          <span class="z-logo" aria-hidden="true">Z</span>
-          <div class="band-copy">
-            <span class="auth-kicker">tamper-evident hash chain</span>
-            <h1>Audit ledger</h1>
-            <p class="band-sub">Every sensitive action is captured in a tamper-evident hash chain. The ledger records metadata only — never plaintext documents.</p>
-          </div>
+      <div class="page-head">
+        <div>
+          <h1>Audit ledger</h1>
+          <div class="sub">Every sensitive action is captured in a tamper-evident hash chain. The ledger records metadata only — never plaintext documents.</div>
         </div>
-        <div class="chip-row band-actions">
-          <button class="btn secondary small" id="audit-refresh">↻ Refresh</button>
-          ${link('', '← Dashboard', 'btn secondary small')}
-        </div>
-      </div>
-
-      <div class="grid stats">
-        <div class="stat ${chainStateTone(chain)}">
-          <div class="stat-label">Chain integrity</div>
-          <div class="stat-num ${chain && !chain.error ? (chain.valid ? 'ok' : 'danger') : 'muted'}">${chain && !chain.error ? (chain.valid ? 'INTACT' : 'BREACHED') : '—'}</div>
-          <div class="stat-sub">${chain && !chain.error ? 're-hash of every block' : 'unavailable'}</div>
-        </div>
-        <div class="stat tone-green">
-          <div class="stat-label">Blocks</div>
-          <div class="stat-num">${chain && !chain.error ? chain.length : '—'}</div>
-          <div class="stat-sub">in the local mirror</div>
-        </div>
-        <div class="stat ${fabricStateTone(network)}">
-          <div class="stat-label">Fabric ledger</div>
-          <div class="stat-num sm ${fabricStateLabel(network).cls}">${fabricStateLabel(network).text}</div>
-          <div class="stat-sub">${fabricStateLabel(network).sub}</div>
-        </div>
-        <div class="stat ${validationStateTone(validation)}">
-          <div class="stat-label">Validation</div>
-          <div class="stat-num sm ${validationStateCls(validation)}">${validationStateText(validation)}</div>
-          <div class="stat-sub">${validation && !validation.error ? `${validation.validation.length} blocks re-checked` : 'unavailable'}</div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h2>Hash chain</h2>
-        ${renderRail(chainBlocks, brokenHeights, chain)}
+        <div class="chip-row">${link('', '← Dashboard', 'btn secondary small')}</div>
       </div>
 
       <div class="grid cols-2">
@@ -76,85 +34,11 @@ export async function mountAudit(container) {
       </div>
 
       <div class="panel">
-        <h2>All blocks (latest first)</h2>
+        <h2>Hash chain (latest first)</h2>
         ${renderChain(chain)}
       </div>
     </div>
   `);
-
-  const refresh = container.querySelector('#audit-refresh');
-  if (refresh) refresh.addEventListener('click', () => window.location.reload());
-}
-
-/* ---------- helpers ---------- */
-
-function chainStateTone(chain) {
-  if (!chain || chain.error) return 'tone-muted';
-  return chain.valid ? 'tone-green' : '';
-}
-function fabricStateTone(net) {
-  if (!net) return 'tone-muted';
-  if (net.error) return 'tone-muted';
-  return net.enabled ? 'tone-peri' : 'tone-muted';
-}
-function fabricStateLabel(net) {
-  if (!net || net.error) return { text: '—', cls: 'muted', sub: 'unavailable' };
-  if (!net.enabled) return { text: 'OFF', cls: 'muted', sub: 'set LEDGER_BACKEND=fabric' };
-  if (net.connected) return { text: 'UP', cls: 'ok', sub: `sequence ${net.seq}` };
-  return { text: 'DOWN', cls: 'danger', sub: net.error || 'no connection' };
-}
-function validationStateTone(v) {
-  if (!v || v.error) return 'tone-muted';
-  return v.validation.valid ? 'tone-green' : '';
-}
-function validationStateCls(v) {
-  if (!v || v.error) return 'muted';
-  return v.validation.valid ? 'ok' : 'danger';
-}
-function validationStateText(v) {
-  if (!v || v.error) return '—';
-  return v.validation.valid ? 'PASS' : 'FAIL';
-}
-
-function shortHash(value) {
-  if (!value) return '—';
-  return value;
-}
-
-function renderRail(blocks, brokenHeights, chain) {
-  if (!chain || chain.error) return '<div class="muted small">unavailable</div>';
-  if (!blocks.length) return emptyState('No audit events yet.');
-  const ordered = [...blocks].slice(-RAIL_LIMIT).sort((a, b) => a.height - b.height);
-  return `
-    <div class="chain-rail">
-      ${ordered.map((b, i) => {
-        const broken = brokenHeights.has(b.height);
-        const next = ordered[i + 1];
-        const linkBroken = next ? brokenHeights.has(next.height) : false;
-        return `
-          <div class="link-card${broken ? ' broken' : ''}">
-            <div class="link-seq">${b.height}</div>
-            <div class="link-body">
-              <div class="link-type">${escapeHtml(b.type)}</div>
-              <div class="link-meta">
-                <span class="link-actor">${escapeHtml(b.actorId ?? 'system')}</span>
-                ${b.subjectId ? `<span class="link-arrow">→</span> <span class="link-actor">${escapeHtml(b.subjectId)}</span>` : ''}
-                ${broken ? '<span class="badge danger">chain broken</span>' : ''}
-              </div>
-              <div class="link-time">${fmtDate(b.timestamp)}</div>
-            </div>
-            <div class="link-hash" title="block hash">${escapeHtml(shortHash(b.hash ?? ''))}</div>
-          </div>
-          ${i < ordered.length - 1 ? `
-            <div class="link-conn${linkBroken ? ' broken' : ''}">
-              <span class="link-node"></span>
-              <span class="link-prev" title="next block prev-hash">${next ? escapeHtml(shortHash(next.prevHash ?? '')) : ''}</span>
-            </div>` : ''}
-        `;
-      }).join('')}
-    </div>
-    ${ordered.length < blocks.length ? `<div class="muted small mt">Showing the latest ${ordered.length} of ${blocks.length} blocks (oldest ≤ height ${ordered[0].height}).</div>` : ''}
-  `;
 }
 
 function renderNetwork(net) {
