@@ -37,7 +37,7 @@ function renderShell(user) {
   topbar.classList.remove('hidden');
   topbar.innerHTML = `
     <div class="bar-inner">
-      <a class="brand" href="#/dashboard">ZTHRMS <span class="brand-sub">zero-trust hrms</span></a>
+      <a class="brand" href="#/dashboard"><span class="z-logo z-logo-sm" aria-hidden="true">Z</span>ZTHRMS <span class="brand-sub">zero-trust hrms</span></a>
       <nav class="nav">${roleNav(user)}</nav>
       <div class="bar-right">
         <span class="who">${user ? escapeHtml(user.displayName || user.username) : ''}${user ? ` · ${escapeHtml(user.role)}` : ''}</span>

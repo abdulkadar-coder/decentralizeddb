@@ -1,43 +1,64 @@
 import { api } from '../api.js';
-import { render, setBusy, toast } from '../util.js';
+import { render, setBusy, toast, escapeHtml } from '../util.js';
 import { navigate } from '../router.js';
+
+const CHIPS = ['Least-privilege roles', 'Accounts link 1:1 to employees', 'Bootstrap-only ADMIN'];
+const TAGLINE = 'Create <em>one</em> identity,<br/>grant nothing more.';
 
 export async function mountRegister(container) {
   render(container, `
-    <div class="auth-wrap">
-      <div class="auth-panel">
-        <h1>Create account</h1>
-        <div class="sub">Role-aware, least-privilege registration. Employees self-register; ADMIN is only granted to the first (bootstrap) account, and MANAGER accounts must be created by an administrator.</div>
-        <div id="reg-err" class="alert error hidden"></div>
-        <form id="reg-form">
-          <div class="form-field">
-            <label for="reg-username">Username</label>
-            <input id="reg-username" name="username" required minlength="3" maxlength="40" autocomplete="username" />
-            <div class="hint">Letters, digits, dot, dash or underscore (3–40 chars).</div>
-          </div>
-          <div class="form-field">
-            <label for="reg-display">Display name</label>
-            <input id="reg-display" name="displayName" required maxlength="80" />
-          </div>
-          <div class="form-field">
-            <label for="reg-password">Password</label>
-            <input id="reg-password" name="password" type="password" required autocomplete="new-password" />
-            <div class="hint">At least 10 characters.</div>
-          </div>
-          <div class="form-field">
-            <label for="reg-role">Role</label>
-            <select id="reg-role" name="role">
-              <option value="EMPLOYEE">Employee (self-service)</option>
-              <option value="MANAGER">Manager (admin-gated)</option>
-              <option value="ADMIN">Administrator (bootstrap only)</option>
-            </select>
-          </div>
-          <div class="form-actions">
-            <button class="btn" id="reg-btn" type="submit">Create account</button>
-          </div>
-        </form>
-        <div class="auth-alt">Already registered? <a href="#/login">Sign in</a></div>
-      </div>
+    <div class="auth-shell">
+      <main class="auth-main">
+        <div class="auth-panel">
+          <span class="auth-kicker">zero-trust · hrms</span>
+          <h1>Create account</h1>
+          <div class="sub">Employees self-register. MANAGER accounts must be created by an administrator.</div>
+          <div id="reg-err" class="alert error hidden"></div>
+          <form id="reg-form">
+            <div class="form-field">
+              <label for="reg-username">Username</label>
+              <input id="reg-username" name="username" required minlength="3" maxlength="40" autocomplete="username" />
+              <div class="hint">Letters, digits, dot, dash or underscore (3–40 chars).</div>
+            </div>
+            <div class="form-field">
+              <label for="reg-display">Display name</label>
+              <input id="reg-display" name="displayName" required maxlength="80" />
+            </div>
+            <div class="form-field">
+              <label for="reg-password">Password</label>
+              <input id="reg-password" name="password" type="password" required autocomplete="new-password" />
+              <div class="hint">At least 10 characters.</div>
+            </div>
+            <div class="form-field">
+              <label for="reg-role">Role</label>
+              <select id="reg-role" name="role">
+                <option value="EMPLOYEE">Employee (self-service)</option>
+                <option value="MANAGER">Manager (admin-gated)</option>
+                <option value="ADMIN">Administrator (bootstrap only)</option>
+              </select>
+            </div>
+            <div class="form-actions">
+              <button class="btn" id="reg-btn" type="submit">Create account</button>
+            </div>
+          </form>
+          <div class="auth-alt">Already registered? <a href="#/login">Sign in</a></div>
+        </div>
+      </main>
+      <aside class="auth-hero">
+        <i class="hero-blob hero-blob-1"></i><i class="hero-blob hero-blob-2"></i>
+        <i class="hero-blob hero-blob-3"></i><i class="hero-blob hero-blob-4"></i>
+        <div class="hero-top">
+          <span class="z-logo" aria-hidden="true">Z</span>
+          <span class="hero-wordmark"><strong>ZTHRMS</strong><small>zero-trust hrms</small></span>
+          <span class="hero-pill">hash-linked · v0.1</span>
+        </div>
+        <div>
+          <h2 class="hero-title">${TAGLINE}</h2>
+          <p class="hero-sub">Role-aware, least-privilege registration. Your account stays locked until an administrator links it to an employee record.</p>
+          <div class="hero-chips">${CHIPS.map((c) => `<span>${escapeHtml(c)}</span>`).join('')}</div>
+        </div>
+        <div class="hero-foot">phase 1 &amp; 2 · SQLite today · Fabric-ready</div>
+      </aside>
     </div>
   `);
 
