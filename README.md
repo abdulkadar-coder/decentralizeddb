@@ -236,6 +236,23 @@ npm start
 npm run e2e
 ```
 
+### Local role demo logins
+
+With the development `.env` defaults (`TOTP_ACCEPT_ANY_CODE=true` and
+`DEMO_ACCOUNTS_ENABLED=true`), the sign-in page shows one-click accounts for
+each role. You can also enter these credentials manually:
+
+| Role | Username | Authenticator code |
+| --- | --- | --- |
+| Administrator | `demo.admin` | `000000` |
+| Manager | `demo.manager` | `000000` |
+| Employee | `demo.employee` | `000000` |
+
+These accounts are seeded only in development when the six-digit TOTP demo
+bypass is enabled. The manager has the demo employee as a direct report. Both
+the accounts and bypass are disabled in production; never use demo credentials
+for real data.
+
 A development `.env` is provided. Copy `.env.example` for reference. Production
 deployments must set real `JWT_SECRET` and `MASTER_KEY` (never hardcode or commit secrets).
 

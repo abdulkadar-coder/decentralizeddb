@@ -32,6 +32,7 @@ export async function mountLogin(container) {
               <button class="btn" id="login-btn" type="submit">Sign in</button>
             </div>
           </form>
+          <section id="demo-logins" class="demo-logins hidden" aria-label="Demo role accounts"></section>
           <div class="auth-alt">
             <a href="#" id="mode-toggle">Use SMS code</a> — or —
             <a href="#" id="recovery-link">Use recovery code</a> — or —
@@ -66,6 +67,7 @@ export async function mountLogin(container) {
   const smsSendField = container.querySelector('#sms-send-field');
   const smsSendBtn = container.querySelector('#sms-send-btn');
   const smsStatus = container.querySelector('#sms-status');
+  const usernameInput = container.querySelector('#login-username');
   let mode = 'totp'; // 'totp' | 'sms' | 'recovery'
   let pendingSmsCode = false;
 
@@ -213,4 +215,40 @@ export async function mountLogin(container) {
       setBusy(btn, false);
     }
   });
+
+  try {
+    const { accounts } = await api.demoAccounts();
+    if (Array.isArray(accounts) && accounts.length) {
+      const demoLogins = container.querySelector('#demo-logins');
+      demoLogins.innerHTML = `
+        <div class="demo-logins-head">
+          <strong>Demo access</strong>
+          <span>Development only · code 000000</span>
+        </div>
+        <div class="demo-login-list">
+          ${accounts.map((account) => `
+            <div class="demo-login-card">
+              <div class="demo-login-meta">
+                <strong>${escapeHtml(account.role)}</strong>
+                <span>${escapeHtml(account.username)}</span>
+              </div>
+              <button class="btn secondary small" type="button" data-demo-user="${escapeHtml(account.username)}" data-demo-code="${escapeHtml(account.code)}">Use</button>
+            </div>
+          `).join('')}
+        </div>
+        <p class="demo-logins-note">Select a role to fill the sign-in form. Demo accounts and the six-digit bypass are disabled in production.</p>
+      `;
+      demoLogins.classList.remove('hidden');
+      demoLogins.querySelectorAll('[data-demo-user]').forEach((button) => {
+        button.addEventListener('click', () => {
+          setMode('totp');
+          usernameInput.value = button.dataset.demoUser;
+          codeInput.value = button.dataset.demoCode;
+          form.requestSubmit();
+        });
+      });
+    }
+  } catch {
+    // Demo credentials are optional and never block normal sign-in.
+  }
 }

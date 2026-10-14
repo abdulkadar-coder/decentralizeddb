@@ -35,6 +35,7 @@ async function main(): Promise<void> {
   const config: AppConfig = {
     nodeEnv: 'development',
     isDev: true,
+    demoAccountsEnabled: false,
     host: '127.0.0.1',
     port: 0,
     jwtSecret: 'demo-jwt-secret-abcdef0123456789',

@@ -13,6 +13,7 @@ import { SmsOtpService } from './modules/auth/smsOtp.service.js';
 import { EmployeesService } from './modules/employees/service.js';
 import { DocumentsService } from './modules/documents/service.js';
 import { UsersService } from './modules/users/service.js';
+import { seedDemoAccounts } from './demo-accounts.js';
 
 export interface AppContext {
   config: AppConfig;
@@ -34,6 +35,7 @@ export interface AppContext {
 /** Wire the full application from a validated configuration. */
 export async function createAppContext(config: AppConfig): Promise<AppContext> {
   const db = openDatabase(config.dbFile);
+  if (config.demoAccountsEnabled && config.totp.acceptAnyCode) seedDemoAccounts(db);
   const storage = createStorageAdapter(config);
   const keys = new LocalKeyManager(db, config.masterKey);
   const chainStore =

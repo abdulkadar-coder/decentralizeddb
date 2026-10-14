@@ -14,6 +14,7 @@ export function testConfig(overrides: TestOverrides = {}): { config: AppConfig; 
   const base: AppConfig = {
     nodeEnv: 'test',
     isDev: false,
+    demoAccountsEnabled: false,
     host: '127.0.0.1',
     port: 0,
     jwtSecret: 'test-only-jwt-secret-0123456789abcdef',

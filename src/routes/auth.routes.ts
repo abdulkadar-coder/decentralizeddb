@@ -4,6 +4,7 @@ import { optionalAuth, requireAuth } from '../middleware/auth.js';
 import { simpleRateLimit, skipInTestEnv } from '../middleware/rate-limit.js';
 import { validateBody } from '../middleware/validate.js';
 import { registerSchema, loginSchema, totpVerifySchema, totpDisableSchema, recoveryLoginSchema, smsSendSchema, smsVerifySchema } from '../validation.js';
+import { DEMO_ACCOUNTS, DEMO_LOGIN_CODE } from '../demo-accounts.js';
 
 export function authRoutes(ctx: AppContext): Router {
   const router = Router();
@@ -18,6 +19,21 @@ export function authRoutes(ctx: AppContext): Router {
     windowMs: 60_000,
     max: 10,
     skip: skipInTestEnv,
+  });
+
+  router.get('/demo-accounts', (_req, res) => {
+    if (!ctx.config.demoAccountsEnabled || !ctx.config.totp.acceptAnyCode) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Demo accounts are disabled' } });
+      return;
+    }
+    res.status(200).json({
+      accounts: DEMO_ACCOUNTS.map(({ username, displayName, role }) => ({
+        username,
+        displayName,
+        role,
+        code: DEMO_LOGIN_CODE,
+      })),
+    });
   });
 
   // Registration - bootstrap admin gets recovery codes, no password

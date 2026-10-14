@@ -49,6 +49,7 @@ function resolvePath(p: string | undefined, fallback: string): string {
 export interface AppConfig {
   nodeEnv: string;
   isDev: boolean;
+  demoAccountsEnabled: boolean;
   host: string;
   port: number;
   jwtSecret: string;
@@ -100,6 +101,7 @@ function deriveTotpKey(jwtSecret: string): Buffer {
 export function loadConfig(): AppConfig {
   const nodeEnv = process.env.NODE_ENV ?? 'development';
   const isDev = nodeEnv !== 'production';
+  const acceptAnyCode = isDev && (process.env.TOTP_ACCEPT_ANY_CODE ?? 'false') === 'true';
   const jwtProvided = Boolean(process.env.JWT_SECRET);
   if (!isDev && (!process.env.JWT_SECRET || Buffer.byteLength(process.env.JWT_SECRET) < 32)) {
     throw new Error('JWT_SECRET must be set to at least 32 bytes in production');
@@ -126,6 +128,8 @@ export function loadConfig(): AppConfig {
   return {
     nodeEnv,
     isDev,
+    demoAccountsEnabled:
+      isDev && acceptAnyCode && (process.env.DEMO_ACCOUNTS_ENABLED ?? 'true') === 'true',
     host: process.env.HOST ?? '0.0.0.0',
     port: Number.isFinite(port) && port > 0 ? port : 3000,
     jwtSecret,
@@ -160,7 +164,7 @@ export function loadConfig(): AppConfig {
       window: Number.parseInt(process.env.TOTP_WINDOW ?? '1', 10),
       recoveryCount: Number.parseInt(process.env.TOTP_RECOVERY_COUNT ?? '8', 10),
       recoveryLen: Number.parseInt(process.env.TOTP_RECOVERY_LEN ?? '10', 10),
-      acceptAnyCode: isDev && (process.env.TOTP_ACCEPT_ANY_CODE ?? 'false') === 'true',
+      acceptAnyCode,
     },
     tokenTtlSeconds: Number.isFinite(tokenTtlSeconds) && tokenTtlSeconds > 0 ? tokenTtlSeconds : 900,
     sms: {

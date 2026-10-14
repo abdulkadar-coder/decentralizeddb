@@ -83,6 +83,10 @@ export const api = {
   },
 
   // ---- auth helpers ----
+  async demoAccounts() {
+    return body('/api/auth/demo-accounts', { method: 'GET', headers: headersFor() });
+  },
+
   async login(username, code) {
     const token = getToken();
     const headers = new Headers(token ? { Authorization: `Bearer ${token}` } : {});

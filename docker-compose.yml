@@ -57,6 +57,8 @@ services:
       FS_STORAGE_ROOT: /app/data/objects
       SMS_OTP_ENABLED: ${SMS_OTP_ENABLED:-false}
       SMS_OTP_DEV_MODE: "false"
+      TOTP_ACCEPT_ANY_CODE: "false"
+      DEMO_ACCOUNTS_ENABLED: "false"
     volumes:
       - app_data:/app/data
       - ${FABRIC_CONFIG_HOST_DIR:-./deploy/fabric}:/run/fabric:ro
