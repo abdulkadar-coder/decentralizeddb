@@ -101,11 +101,22 @@ export function loadConfig(): AppConfig {
   const nodeEnv = process.env.NODE_ENV ?? 'development';
   const isDev = nodeEnv !== 'production';
   const jwtProvided = Boolean(process.env.JWT_SECRET);
+  if (!isDev && (!process.env.JWT_SECRET || Buffer.byteLength(process.env.JWT_SECRET) < 32)) {
+    throw new Error('JWT_SECRET must be set to at least 32 bytes in production');
+  }
   const jwtSecret = process.env.JWT_SECRET || randomBytes(32).toString('base64url');
 
   const masterProvided = Boolean(process.env.MASTER_KEY);
+  const masterKeyValue = process.env.MASTER_KEY;
+  const configuredMasterKey = masterKeyValue ? Buffer.from(masterKeyValue, 'base64') : undefined;
+  if (
+    !isDev &&
+    (!masterKeyValue || !configuredMasterKey || configuredMasterKey.length < 32 || configuredMasterKey.toString('base64') !== masterKeyValue)
+  ) {
+    throw new Error('MASTER_KEY must be valid base64 containing at least 32 bytes in production');
+  }
   const masterKey = process.env.MASTER_KEY
-    ? Buffer.from(process.env.MASTER_KEY, 'base64')
+    ? configuredMasterKey!
     : randomBytes(32);
 
   const port = Number.parseInt(process.env.PORT ?? '3000', 10);
@@ -153,7 +164,7 @@ export function loadConfig(): AppConfig {
     },
     tokenTtlSeconds: Number.isFinite(tokenTtlSeconds) && tokenTtlSeconds > 0 ? tokenTtlSeconds : 900,
     sms: {
-      enabled: (process.env.SMS_OTP_ENABLED ?? 'true') === 'true',
+      enabled: (process.env.SMS_OTP_ENABLED ?? (isDev ? 'true' : 'false')) === 'true',
       toNumber: process.env.SMS_TO_NUMBER ?? '+15555550100',
       ttlSeconds: Number.parseInt(process.env.SMS_OTP_TTL_SECONDS ?? '300', 10),
       digits: Number.parseInt(process.env.SMS_OTP_DIGITS ?? '6', 10),

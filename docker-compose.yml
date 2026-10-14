@@ -1,61 +1,75 @@
-
-# ============================================================================
-# Production-oriented ZeroTrust HRMS - Phase 1
-# Local development with MinIO object storage and the API via Docker Compose.
-#
-#   docker compose up --build
-#
-# The app and MinIO both run in Docker. Secrets below are DEVELOPMENT-ONLY
-# placeholders; replace them (and never commit real secrets) before any
-# non-local deployment. Generate real values with:
-#   openssl rand -base64 48   # JWT secret
-#   openssl rand -base64 32   # MASTER_KEY
-# ============================================================================
+name: zerotrust-hrms
 
 services:
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     command: server /data --console-address ":9001"
+    restart: unless-stopped
+    init: true
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 5s
-      retries: 5
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+      retries: 12
+      start_period: 10s
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-hrms_dev_access}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-hrms_dev_secret}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in your environment}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in your environment}
     volumes:
       - minio_data:/data
 
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
     depends_on:
       minio:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 3000
-      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-change-me}
-      MASTER_KEY: ${MASTER_KEY:-ZGV2LW9ubHktbWFzdGVyLWtleS0yNTYtYml0c3M=}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in your environment}
+      MASTER_KEY: ${MASTER_KEY:?Set MASTER_KEY in your environment}
       STORAGE_BACKEND: minio
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
       MINIO_USE_SSL: "false"
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-hrms_dev_access}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-hrms_dev_secret}
-      MINIO_BUCKET: hrms-documents
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in your environment}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in your environment}
+      MINIO_BUCKET: ${MINIO_BUCKET:-hrms-documents}
       BLOCKCHAIN_BACKEND: sqlite
+      LEDGER_BACKEND: ${LEDGER_BACKEND:-off}
+      FABRIC_MSP_ID: ${FABRIC_MSP_ID:-HROrgMSP}
+      FABRIC_MSP_CONFIG_DIR: /run/fabric/msp
+      FABRIC_TLS_CA: /run/fabric/tls-ca.pem
+      FABRIC_PEER_ENDPOINT: ${FABRIC_PEER_ENDPOINT:-host.docker.internal:7051}
+      FABRIC_TLS_HOST_OVERRIDE: ${FABRIC_TLS_HOST_OVERRIDE:-peer0.hr.hrms.com}
+      FABRIC_CHANNEL: ${FABRIC_CHANNEL:-hrmsaudit}
+      FABRIC_CHAINCODE: ${FABRIC_CHAINCODE:-hrmsauditcc}
+      FABRIC_ENDORSE_ORGS: ${FABRIC_ENDORSE_ORGS:-HROrgMSP,FinanceOrgMSP}
       DATA_DIR: /app/data
       DB_FILE: /app/data/hrms.db
       FS_STORAGE_ROOT: /app/data/objects
+      SMS_OTP_ENABLED: ${SMS_OTP_ENABLED:-false}
+      SMS_OTP_DEV_MODE: "false"
     volumes:
       - app_data:/app/data
+      - ${FABRIC_CONFIG_HOST_DIR:-./deploy/fabric}:/run/fabric:ro
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
 volumes:
   minio_data:

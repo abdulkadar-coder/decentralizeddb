@@ -326,13 +326,46 @@ ping()
 
 Select with `STORAGE_BACKEND=filesystem|minio`.
 
-### MinIO with Docker
+### Deployment with Docker Compose
 
-```powershell
-docker compose up --build          # starts MinIO (9000) + app (3000)
+Compose runs the production Node build and private MinIO storage. The app port
+binds to `127.0.0.1` for a reverse proxy, and app data and objects persist in
+named Docker volumes. MinIO's API and console are not published to the host.
+
+Create strong secrets in a local, untracked `.env` file (never commit it):
+
+```dotenv
+JWT_SECRET=<at-least-32-random-bytes>
+MASTER_KEY=<base64-encoded-32-random-bytes>
+MINIO_ACCESS_KEY=<private-minio-user>
+MINIO_SECRET_KEY=<private-minio-password-at-least-8-characters>
 ```
 
-Set `STORAGE_BACKEND=minio` and the `MINIO_*` variables in `.env` (see `.env.example`).
+Generate values with a trusted password manager or cryptographic random
+generator. Keep `MASTER_KEY` backed up separately: losing or rotating it makes
+previously encrypted documents unreadable. Set `APP_PORT` if port 3000 is in
+use. Then deploy and inspect readiness:
+
+```powershell
+docker compose config --quiet
+docker compose up --build -d
+docker compose ps
+Invoke-RestMethod http://127.0.0.1:3000/api/health
+```
+
+Put an HTTPS reverse proxy in front of the loopback-bound app before allowing
+remote access. Configure its trusted proxy behavior and TLS at that layer.
+`LEDGER_BACKEND` defaults to `off`; set it to `fabric` only after mounting and
+configuring a production Fabric MSP identity at `deploy/fabric/msp`, its TLS
+CA certificate at `deploy/fabric/tls-ca.pem`, the channel and chaincode, and
+`FABRIC_PEER_ENDPOINT` for the app container. Override the mounted host folder
+with `FABRIC_CONFIG_HOST_DIR` when needed. Set `FABRIC_TLS_HOST_OVERRIDE` to
+the peer's certificate name. The development Fabric keys in this repo are not
+deployment credentials. The built-in local key manager is suitable
+for an MVP deployment with carefully protected secrets and backups; use a
+managed KMS before production workloads requiring managed key rotation or
+hardware-backed key protection. SMS OTP defaults off because this project
+does not include a production SMS delivery provider.
 
 ### MinIO integration tests
 
