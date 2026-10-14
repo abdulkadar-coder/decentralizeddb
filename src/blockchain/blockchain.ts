@@ -12,7 +12,17 @@ export type AuditEventType =
   | 'ACCESS_REVOKED'
   | 'AUTH_LOGIN'
   | 'AUTH_LOGIN_FAILED'
-  | 'GENESIS';
+  | 'GENESIS'
+  | 'TOTP_SETUP'
+  | 'TOTP_VERIFIED'
+  | 'TOTP_LOGIN'
+  | 'TOTP_RECOVERY'
+  | 'TOTP_DISABLED'
+  | 'TOTP_LOGIN_FAILED'
+  | 'TOTP_RECOVERY_FAILED'
+  | 'SMS_OTP_SENT'
+  | 'SMS_LOGIN'
+  | 'SMS_LOGIN_FAILED';
 
 /** Audit transactions carry metadata only - never plaintext or keys. */
 export interface AuditTransaction {

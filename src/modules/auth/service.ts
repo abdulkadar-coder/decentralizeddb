@@ -2,11 +2,12 @@ import { randomUUID } from 'node:crypto';
 import type { Db } from '../../db/index.js';
 import { nowIso } from '../../db/index.js';
 import { errors } from '../../errors.js';
-import { hashPassword, verifyPassword } from '../../auth/passwords.js';
 import { signToken, type Role, type JwtClaims } from '../../auth/tokens.js';
 import type { Actor } from '../../authorization.js';
 import type { ResolvedIdentity } from '../../middleware/auth.js';
 import type { AuditService } from '../audit/service.js';
+import { generateRecoveryCodes, hashRecoveryCodes } from '../../auth/recovery.js';
+import type { AppConfig } from '../../config.js';
 
 export interface AuthConfig {
   jwtSecret: string;
@@ -16,13 +17,18 @@ export interface AuthConfig {
 export interface UserRow {
   id: string;
   username: string;
-  password_hash: string;
+  password_hash: string | null;
   role: Role;
   display_name: string;
   employee_id: string | null;
   is_active: number;
   created_at: string;
   updated_at: string;
+  totp_secret_enc: string | null;
+  totp_enabled: number;
+  totp_verified_at: string | null;
+  totp_created_at: string | null;
+  recovery_codes_json: string | null;
 }
 
 export interface PublicUser {
@@ -58,7 +64,7 @@ export class AuthService {
   constructor(
     private readonly db: Db,
     private readonly audit: AuditService,
-    private readonly cfg: AuthConfig,
+    private readonly cfg: AuthConfig & { totp: AppConfig['totp'] },
   ) {}
 
   findUser(username: string): UserRow | null {
@@ -82,33 +88,37 @@ export class AuthService {
   }
 
   /**
-   * Register a user. `role: 'ADMIN'` is granted either during bootstrap
-   * (when no active administrator exists yet) or to an authenticated admin.
+   * Register a user in the passwordless TOTP model.
+   *
+   * - The first ADMIN bootstrap-registers without any prior auth and receives
+   *   the account's recovery codes (its initial credential).
+   * - Additional ADMIN and MANAGER accounts require an authenticated ADMIN actor.
+   * - EMPLOYEE accounts self-register.
+   *
+   * Every new account is issued one-time recovery codes that let it log in;
+   * the holder then enrolls an authenticator app via `/api/auth/totp/setup`.
    */
   async register(
-    input: { username: string; password: string; displayName: string; role?: Role },
+    input: { username: string; displayName: string; role?: Role },
     actor?: Actor | null,
-  ): Promise<PublicUser> {
+  ): Promise<{ user: PublicUser; recoveryCodes: string[] }> {
     const role = input.role ?? 'EMPLOYEE';
     if (!['ADMIN', 'MANAGER', 'EMPLOYEE'].includes(role)) {
       throw errors.badRequest('Invalid role');
     }
-    // Least-privilege: only EMPLOYEE (and the very first ADMIN bootstrap) may
-    // self-register. MANAGER roles grant audit read + team visibility, so they
-    // require an authenticated administrator actor.
+
+    const hasAdmins = adminCount(this.db) > 0;
+    if (role === 'ADMIN' && !hasAdmins && actor && actor.role !== 'ADMIN') {
+      throw errors.forbidden('Only the first administrator can bootstrap the system');
+    }
+    if (role === 'ADMIN' && hasAdmins && actor?.role !== 'ADMIN') {
+      throw errors.forbidden('Only administrators can create admin accounts');
+    }
     if (role === 'MANAGER' && actor?.role !== 'ADMIN') {
       throw errors.forbidden('Only administrators can create manager accounts');
     }
-    if (role === 'ADMIN') {
-      const hasAdmins = adminCount(this.db) > 0;
-      const isAdminActor = actor?.role === 'ADMIN';
-      const isBootstrap = !hasAdmins && !actor;
-      if (!hasAdmins && actor && actor.role !== 'ADMIN') {
-        throw errors.forbidden('Only the first administrator can bootstrap the system');
-      }
-      if (!isAdminActor && !isBootstrap) {
-        throw errors.forbidden('Only administrators can create admin accounts');
-      }
+    if (!hasAdmins && role !== 'ADMIN') {
+      throw errors.badRequest('The first registered account must be an ADMIN');
     }
     if (this.findUser(input.username)) {
       throw errors.conflict('Username is already taken');
@@ -116,30 +126,23 @@ export class AuthService {
 
     const id = randomUUID();
     const ts = nowIso();
-    const passwordHash = hashPassword(input.password);
+    const recoveryCodes = generateRecoveryCodes(this.cfg.totp.recoveryCount, this.cfg.totp.recoveryLen);
+    const recoveryHashes = hashRecoveryCodes(recoveryCodes);
+
     this.db
       .prepare(
-        `INSERT INTO users (id, username, password_hash, role, display_name, is_active, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+        `INSERT INTO users (id, username, password_hash, role, display_name, is_active, created_at, updated_at, totp_secret_enc, totp_enabled, totp_verified_at, totp_created_at, recovery_codes_json)
+         VALUES (?, ?, NULL, ?, ?, 1, ?, ?, NULL, 0, NULL, NULL, ?)`,
       )
-      .run(id, input.username, passwordHash, role, input.displayName, ts, ts);
+      .run(id, input.username, role, input.displayName, ts, ts, JSON.stringify(recoveryHashes));
 
-    return toPublicUser(this.findUser(input.username)!);
+    return { user: toPublicUser(this.findUser(input.username)!), recoveryCodes };
   }
 
-  async login(username: string, password: string): Promise<{ token: string; user: PublicUser; userRow: UserRow }> {
-    const user = this.findUser(username);
-    if (!user) {
-      await this.audit.record('AUTH_LOGIN_FAILED', {
-        actorRole: 'EMPLOYEE',
-        payload: { username: username.slice(0, 1) + '*'.repeat(Math.max(0, username.length - 1)) },
-      });
-      throw errors.unauthorized('Invalid credentials');
-    }
-    const ok = verifyPassword(password, user.password_hash);
-    if (!ok || user.is_active !== 1) {
-      await this.audit.record('AUTH_LOGIN_FAILED', { actorId: user.id, actorRole: user.role, subjectId: user.employee_id ?? undefined });
-      throw errors.unauthorized('Invalid credentials');
+  async loginWithTotp(userId: string): Promise<{ token: string; user: PublicUser }> {
+    const user = this.db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as UserRow | undefined;
+    if (!user || user.is_active !== 1) {
+      throw errors.unauthorized('Account not found or inactive');
     }
 
     const claims: Omit<JwtClaims, 'iat' | 'exp'> = {
@@ -156,7 +159,7 @@ export class AuthService {
       subjectId: user.employee_id ?? undefined,
     });
 
-    return { token, user: toPublicUser(user), userRow: user };
+    return { token, user: toPublicUser(user) };
   }
 
   me(actor: Actor): UserRow {

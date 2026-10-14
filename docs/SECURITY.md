@@ -1,20 +1,23 @@
 # ZeroTrust HRMS — Security Controls (Phase 3 review)
 
 This document lists what is **implemented and verified** vs. what is a clearly
+
+
+
 labeled **future enhancement**. The review follows OWASP API Security
 categories and this app's own threat model.
 
 ## Verification basis
 
-All of the following were exercised by live HTTP requests in Phase 3
-(`scripts/e2e.ts`, 38/38 green) or by the unit suite (62 green).
+The current verification run passed 39/39 live HTTP workflow checks and 115
+unit tests. Three MinIO integration tests are skipped unless MinIO is configured.
 
 ## Implemented & verified
 
 | Control | Where | Evidence |
 | --- | --- | --- |
-| Password storage | scrypt hash (`src/auth/passwords.ts`) | tests |
-| Token auth | HS256 JWT, `timingSafeEqual` verify, 1 h expiry | `tokens.ts` + tests |
+| Passwordless sign-in | TOTP, one-time recovery codes and optional SMS OTP | auth service tests + live API workflows |
+| Token auth | HS256 JWT, `timingSafeEqual` verify, 15 min default expiry | `tokens.ts` + tests |
 | Fresh-identity RBAC | middleware re-resolves role + user→employee link per request; role change applies immediately | `middleware/auth.ts` |
 | Per-route authorization | ADMIN/MANAGER/EMPLOYEE gates on employees, documents, audit | `authorization.ts`, routes |
 | Employee ownership | self / direct-report / admin scoped read+write | e2e cross-record 403 |
@@ -36,7 +39,7 @@ All of the following were exercised by live HTTP requests in Phase 3
 
 - **KMS-backed key management** — `LocalKeyManager` is a KDF over a master
   secret, not a hardware/cloud KMS. Swap via the `KeyManager` interface.
-- **Refresh-token rotation, MFA, SSO/IdP federation.**
+- **Refresh-token rotation, SSO/IdP federation.**
 - **httpOnly SameSite cookies + CSRF defense** — the SPA stores the JWT in
   `localStorage` (XSS-exposed); acceptable for the demo, not for production.
 - **Centralized secrets vault** — JWT/MASTER_KEY come from env only.

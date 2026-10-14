@@ -34,8 +34,8 @@ tool_path() {
 }
 
 export PATH="$ROOT_DIR/bin:$PATH"
-CRYPTOGEN="$(tool_path cryptogen)"
-CONFIGTXGEN="$(tool_path configtxgen)"
+# Resolve these only in setup.sh. Network/channel/deploy operations consume
+# already-generated artifacts and should not require the host-side generators.
 
 # ---------------------------------------------------------------------------
 # Fabric peer CLI inside a container on the network.
@@ -47,18 +47,22 @@ pc() { # peer-cli wrapper: docker run with org context + repo mounted
   local envs=(CORE_PEER_LOCALMSPID CORE_PEER_ADDRESS CORE_PEER_TLS_ENABLED \
               CORE_PEER_TLS_ROOTCERT_FILE CORE_PEER_MSPCONFIGPATH)
   local envarg=()
+  local root_host chaincode_host
+  root_host="$(cygpath -m "$ROOT_DIR")"
+  chaincode_host="$(cygpath -m "$CHAINCODE_SRC")"
   for e in "${envs[@]}"; do
     if [ -n "${!e:-}" ]; then envarg+=("-e" "$e"); fi
   done
-  docker run --rm --network "$NETWORK_NAME" "${envarg[@]}" \
-    -v "$ROOT_DIR:/network" \
-    -v "$CHAINCODE_SRC:/chaincode" \
+  MSYS_NO_PATHCONV=1 MSYS2_ENV_CONV_EXCL='CORE_PEER_MSPCONFIGPATH;CORE_PEER_TLS_ROOTCERT_FILE' \
+    docker run --rm --network "$NETWORK_NAME" "${envarg[@]}" \
+    -v "$root_host:/network" \
+    -v "$chaincode_host:/chaincode" \
     "$PEER_IMG" peer "$@"
 }
 
 CHANNEL="hrmsaudit"
 CHAINCODE_NAME="hrmsauditcc"
-CHAINCODE_VERSION="1.0"
+CHAINCODE_VERSION="1.1"
 CHAINCODE_SRC="$ROOT_DIR/../chaincode/hrms-audit"
 
 DOMAIN_BASE="hrms.com"

@@ -31,7 +31,9 @@ Express 4 app  ── static /public + /api/*     [src/app.ts]
 - Filesystem `data/objects/` (or MinIO bucket `hrms-documents`): **ciphertext
   only** — `IV(12) ‖ ciphertext ‖ authTag(16)` with an AAD bound to
   realm/bucket/objectKey/contentType and a SHA-256 integrity digest.
-- Audit blocks carry metadata only; never plaintext or keys.
+- Local audit blocks carry metadata only. After admin approval, Fabric stores
+  encrypted document envelopes separately in ledger state; plaintext and keys
+  are never written to either ledger.
 
 ## Frontend → backend mapping (Task 1 & 2)
 

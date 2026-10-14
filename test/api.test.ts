@@ -30,17 +30,22 @@ beforeAll(async () => {
 
 afterAll(() => cleanup());
 
-async function register(username: string, password: string, role?: string, adminToken?: string): Promise<Session> {
+async function registerUser(username: string, displayName: string, role?: string, adminToken?: string) {
   const req = request(app)
     .post('/api/auth/register')
-    .send({ username, password, displayName: username, role });
+    .send({ username, displayName, role });
   if (adminToken) req.set('Authorization', `Bearer ${adminToken}`);
   const res = await req;
   expect(res.status, JSON.stringify(res.body)).toBe(201);
-  const login = await request(app).post('/api/auth/login').send({ username, password }).expect(200) as {
-    body: { token: string; user: { id: string; role: string } };
-  };
-  return { token: login.body.token, userId: login.body.user.id, role: login.body.user.role };
+  return res.body as { user: { id: string; role: string }; recoveryCodes: string[] };
+}
+
+async function recoveryLogin(username: string, recoveryCode: string): Promise<Session> {
+  const res = await request(app)
+    .post('/api/auth/recovery/login')
+    .send({ username, recoveryCode });
+  expect(res.status, JSON.stringify(res.body)).toBe(200);
+  return { token: res.body.token, userId: res.body.user.id, role: res.body.user.role };
 }
 
 async function createEmployee(token: string, body: Record<string, string>) {
@@ -67,42 +72,61 @@ describe('Phase 1 API - full flow', () => {
   });
 
   it('bootstraps the first ADMIN without prior auth', async () => {
-    admin = await register('root-admin', 'supersecure-password-1', 'ADMIN');
+    const reg = await registerUser('root-admin', 'Root Admin', 'ADMIN');
+    expect(reg.user.role).toBe('ADMIN');
+    expect(reg.recoveryCodes).toHaveLength(8);
+    admin = await recoveryLogin('root-admin', reg.recoveryCodes[0]!);
     expect(admin.role).toBe('ADMIN');
   });
 
   it('forbids a second ADMIN registration without an admin token', async () => {
     const res = await request(app)
       .post('/api/auth/register')
-      .send({ username: 'rogue-admin', password: 'rogue-password-123', displayName: 'Rogue', role: 'ADMIN' });
+      .send({ username: 'rogue-admin', displayName: 'Rogue', role: 'ADMIN' });
     expect(res.status).toBe(403);
+  });
+
+  it('does not trust a stale ADMIN token for privileged registration', async () => {
+    ctx.db.prepare("UPDATE users SET role = 'MANAGER' WHERE id = ?").run(admin.userId);
+    try {
+      const res = await request(app)
+        .post('/api/auth/register')
+        .set('Authorization', `Bearer ${admin.token}`)
+        .send({ username: 'stale-admin', displayName: 'Stale Admin', role: 'ADMIN' });
+      expect(res.status).toBe(403);
+    } finally {
+      ctx.db.prepare("UPDATE users SET role = 'ADMIN' WHERE id = ?").run(admin.userId);
+    }
   });
 
   it('forbids self-service MANAGER registration without an admin token', async () => {
     const res = await request(app)
       .post('/api/auth/register')
-      .send({ username: 'mgr-rogue', password: 'rogue-pass-12345', displayName: 'Rogue Mgr', role: 'MANAGER' });
+      .send({ username: 'mgr-rogue', displayName: 'Rogue Mgr', role: 'MANAGER' });
     expect(res.status).toBe(403);
   });
 
   it('registers manager (admin-minted) and employees (self-service)', async () => {
-    manager = await register('mgr-mgr', 'manager-password-1', 'MANAGER', admin.token);
-    emp1 = await register('e1-e1', 'employee-password-1', 'EMPLOYEE');
-    emp2 = await register('e2-e2', 'employee-password-2', 'EMPLOYEE');
+    const mgrReg = await registerUser('mgr-mgr', 'Mgr Mg', 'MANAGER', admin.token);
+    manager = await recoveryLogin('mgr-mgr', mgrReg.recoveryCodes[0]!);
+    const e1 = await registerUser('e1-e1', 'Alice', 'EMPLOYEE');
+    emp1 = await recoveryLogin('e1-e1', e1.recoveryCodes[0]!);
+    const e2 = await registerUser('e2-e2', 'Bob', 'EMPLOYEE');
+    emp2 = await recoveryLogin('e2-e2', e2.recoveryCodes[0]!);
     expect(manager.role).toBe('MANAGER');
   });
 
   it('rejects duplicate usernames', async () => {
     await request(app)
       .post('/api/auth/register')
-      .send({ username: 'e1-e1', password: 'employee-password-1', displayName: 'Dup' })
+      .send({ username: 'e1-e1', displayName: 'Dup' })
       .expect(409);
   });
 
-  it('rejects weak passwords at validation', async () => {
+  it('rejects malformed register payloads at validation', async () => {
     await request(app)
       .post('/api/auth/register')
-      .send({ username: 'weak', password: 'short', displayName: 'Weak' })
+      .send({ username: 'x', displayName: 'X' })
       .expect(422);
   });
 
@@ -150,24 +174,40 @@ describe('Phase 1 API - full flow', () => {
     expect(asAdmin.body.employees).toHaveLength(3);
   });
 
-  it('uploads encrypted documents when authorized (owner and manager) but denies unauthorized', async () => {
+  it('allows only administrators to upload employee proof documents', async () => {
     const up1 = await request(app)
       .post(`/api/employees/${emp1Emp.id}/documents`)
-      .set('Authorization', `Bearer ${emp1.token}`)
+      .set('Authorization', `Bearer ${admin.token}`)
       .set('X-Filename', 'trn-991.pdf')
       .set('Content-Type', 'application/pdf')
       .send(SECRET_DOC);
     expect(up1.status, JSON.stringify(up1.body)).toBe(201);
     doc1 = up1.body.document as { id: string };
 
+    await request(app)
+      .post(`/api/employees/${emp1Emp.id}/documents`)
+      .set('Authorization', `Bearer ${emp1.token}`)
+      .set('X-Filename', 'owner-proof.pdf')
+      .set('Content-Type', 'application/pdf')
+      .send(SECRET_DOC)
+      .expect(403);
+
     const up2 = await request(app)
       .post(`/api/employees/${emp1Emp.id}/documents`)
-      .set('Authorization', `Bearer ${manager.token}`)
+      .set('Authorization', `Bearer ${admin.token}`)
       .set('X-Filename', 'review-notes.txt')
       .set('Content-Type', 'text/plain')
       .send(Buffer.from('manager note'));
     expect(up2.status, JSON.stringify(up2.body)).toBe(201);
     doc2 = up2.body.document as { id: string };
+
+    await request(app)
+      .post(`/api/employees/${emp1Emp.id}/documents`)
+      .set('Authorization', `Bearer ${manager.token}`)
+      .set('X-Filename', 'manager-proof.txt')
+      .set('Content-Type', 'text/plain')
+      .send(Buffer.from('manager note'))
+      .expect(403);
 
     await request(app)
       .post(`/api/employees/${emp1Emp.id}/documents`)
@@ -313,11 +353,11 @@ describe('Phase 1 API - full flow', () => {
   it('login failures are recorded to the audit chain', async () => {
     await request(app)
       .post('/api/auth/login')
-      .send({ username: 'e1-e1', password: 'definitely-wrong' })
+      .send({ username: 'e1-e1', code: '000000' })
       .expect(401);
     const chainRes = await request(app).get('/api/audit/chain').set('Authorization', `Bearer ${admin.token}`).expect(200);
     const types = chainRes.body.blocks.map((b: { type: string }) => b.type);
-    expect(types).toContain('AUTH_LOGIN_FAILED');
+    expect(types).toContain('TOTP_LOGIN_FAILED');
   });
 
   it('input validation rejects malformed employee payloads', async () => {

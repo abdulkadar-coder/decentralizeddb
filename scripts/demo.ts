@@ -56,6 +56,24 @@ async function main(): Promise<void> {
     blockchainBackend: 'sqlite',
     ledgerBackend: 'off',
     fabric: { ...defaultFabricOptions(), enabled: false },
+    totp: {
+      encryptionKey: Buffer.from('demo-totp-encryption-key-0123456789abcdef', 'utf8').subarray(0, 32),
+      issuer: 'DemoApp',
+      digits: 6,
+      period: 30,
+      window: 1,
+      recoveryCount: 8,
+      recoveryLen: 10,
+      acceptAnyCode: false,
+    },
+    sms: {
+      enabled: true,
+      toNumber: '7094762770',
+      ttlSeconds: 300,
+      digits: 6,
+      devMode: true,
+    },
+    tokenTtlSeconds: 900,
   };
 
   const ctx = await createAppContext(config);
@@ -90,44 +108,48 @@ async function main(): Promise<void> {
     return (await r.json()) as T;
   }
 
+  try {
   console.log(divider);
   console.log('ZEROTRUST HRMS - PHASE 1 DEMONSTRATION');
   console.log(divider);
 
   console.log('\n[1] CREATE EMPLOYEES');
-  const adminReg = await json<{ user: { username: string } }>(
-    await post('/api/auth/register', { username: 'demo-admin', password: 'admin-secure-password-1', displayName: 'Demo Admin', role: 'ADMIN' }),
-  );
-  const adminLogin = await json<{ token: string }>(await post('/api/auth/login', { username: 'demo-admin', password: 'admin-secure-password-1' }));
-  console.log(`  bootstrap admin: ${adminReg.user.username}`);
-  const adminToken = adminLogin.token;
-
-  const mgrReg = await json<{ user: { username: string; role: string } }>(
-    await post('/api/auth/register', { username: 'demo-mgr', password: 'manager-secure-password-1', displayName: 'Demo Manager', role: 'MANAGER' }, adminToken),
-  );
-  console.log(`  manager (admin-minted): ${mgrReg.user.username} (${mgrReg.user.role})`);
-
-  for (const [username, password, displayName, role] of [
-    ['demo-emp', 'employee-secure-password-1', 'Demo Employee', 'EMPLOYEE'],
-    ['demo-other', 'other-secure-password-1', 'Other Employee', 'EMPLOYEE'],
-  ] as const) {
-    const reg = await json<{ user: { username: string; role: string } }>(
-      await post('/api/auth/register', { username, password, displayName, role }),
-    );
-    console.log(`  registered user: ${reg.user.username} (${reg.user.role})`);
+  async function registerAndLogin(username: string, displayName: string, role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE', token?: string) {
+    const response = await post('/api/auth/register', { username, displayName, role }, token);
+    const registered = await json<{ user: { id: string; username: string; role: string }; recoveryCodes: string[] }>(response);
+    if (!response.ok || !registered.recoveryCodes?.[0]) {
+      throw new Error(`Could not register ${role} '${username}': HTTP ${response.status} ${JSON.stringify(registered)}`);
+    }
+    const loginResponse = await post('/api/auth/recovery/login', {
+      username,
+      recoveryCode: registered.recoveryCodes[0],
+    });
+    const login = await json<{ token: string; user: { id: string } }>(loginResponse);
+    if (!loginResponse.ok || !login.token) {
+      throw new Error(`Could not log in '${username}' with its issued recovery code: HTTP ${loginResponse.status}`);
+    }
+    return { ...registered, token: login.token, userId: login.user.id };
   }
 
-  const mgrLogin = await json<{ token: string; user: { id: string } }>(await post('/api/auth/login', { username: 'demo-mgr', password: 'manager-secure-password-1' }));
-  const empLogin = await json<{ token: string; user: { id: string } }>(await post('/api/auth/login', { username: 'demo-emp', password: 'employee-secure-password-1' }));
-  const otherLogin = await json<{ token: string; user: { id: string } }>(await post('/api/auth/login', { username: 'demo-other', password: 'other-secure-password-1' }));
+  const admin = await registerAndLogin('demo-admin', 'Demo Admin', 'ADMIN');
+  console.log(`  bootstrap admin: ${admin.user.username}`);
+  const adminToken = admin.token;
+
+  const manager = await registerAndLogin('demo-mgr', 'Demo Manager', 'MANAGER', adminToken);
+  console.log(`  manager (admin-minted): ${manager.user.username} (${manager.user.role})`);
+
+  const employee = await registerAndLogin('demo-emp', 'Demo Employee', 'EMPLOYEE');
+  console.log(`  registered user: ${employee.user.username} (${employee.user.role})`);
+  const outsider = await registerAndLogin('demo-other', 'Other Employee', 'EMPLOYEE');
+  console.log(`  registered user: ${outsider.user.username} (${outsider.user.role})`);
 
   const empCreate = await json<{ employee: { id: string; fullName: string } }>(
-    await post('/api/employees', { fullName: 'Alice Paycheck', department: 'Finance', title: 'Accountant', userId: empLogin.user.id }, adminToken),
+    await post('/api/employees', { fullName: 'Alice Paycheck', department: 'Finance', title: 'Accountant', userId: employee.userId }, adminToken),
   );
   const mgrCreate = await json<{ employee: { id: string; fullName: string } }>(
-    await post('/api/employees', { fullName: 'Manager Bob', department: 'Finance', title: 'Head of Finance', userId: mgrLogin.user.id }, adminToken),
+    await post('/api/employees', { fullName: 'Manager Bob', department: 'Finance', title: 'Head of Finance', userId: manager.userId }, adminToken),
   );
-  await post('/api/employees', { fullName: 'Mallory Outsider', department: 'Sales', title: 'Sales Rep', userId: otherLogin.user.id }, adminToken);
+  await post('/api/employees', { fullName: 'Mallory Outsider', department: 'Sales', title: 'Sales Rep', userId: outsider.userId }, adminToken);
 
   await fetch(base + `/api/employees/${empCreate.employee.id}`, {
     method: 'PATCH',
@@ -140,13 +162,13 @@ async function main(): Promise<void> {
 
   console.log('\n[2] AUTHENTICATE AS AUTHORIZED USER');
   const me = await json<{ user: { username: string; role: string; employeeId: string | null } }>(
-    await get('/api/auth/me', empLogin.token),
+    await get('/api/auth/me', employee.token),
   );
   console.log(`  authenticated as ${me.user.username} -> role=${me.user.role}, employeeId=${masked(me.user.employeeId ?? 'n/a')}`);
 
   console.log('\n[3+4] UPLOAD -> ENCRYPT -> STORE IN OBJECT STORAGE');
   const payload = Buffer.from('Wil exp 42 pass TRN-991 - strictly confidential');
-  const up = await upload(`/api/employees/${empCreate.employee.id}/documents`, empLogin.token, 'trn-991.pdf', payload);
+  const up = await upload(`/api/employees/${empCreate.employee.id}/documents`, employee.token, 'trn-991.pdf', payload);
   const upBody = await json<{ document: { id: string; sizeBytes: number; status: string } }>(up);
   console.log(`  upload HTTP ${up.status}; document id=${masked(upBody.document.id)}, size=${upBody.document.sizeBytes} bytes, status=${upBody.document.status}`);
 
@@ -158,13 +180,13 @@ async function main(): Promise<void> {
   console.log(`  plaintext leaked to storage? ${blob.includes(payload) ? 'YES (BUG)' : 'NO -> ciphertext-only at rest'}`);
 
   console.log('\n[5] RETRIEVE DOCUMENT AS AUTHORIZED USER');
-  const dlRes = await get(`/api/employees/${empCreate.employee.id}/documents/${docId}`, empLogin.token);
+  const dlRes = await get(`/api/employees/${empCreate.employee.id}/documents/${docId}`, employee.token);
   const dlBytes = Buffer.from(await dlRes.arrayBuffer());
   console.log(`  HTTP ${dlRes.status}; retrieved ${dlBytes.length} bytes`);
   console.log(`  content matches original? ${dlBytes.equals(payload) ? 'YES' : 'NO (BUG)'}`);
 
   console.log('\n[6] REJECT UNAUTHORIZED ACCESS');
-  const denied = await get(`/api/employees/${empCreate.employee.id}/documents/${docId}`, otherLogin.token);
+  const denied = await get(`/api/employees/${empCreate.employee.id}/documents/${docId}`, outsider.token);
   const deniedBody = await json<{ error: { code: string; message: string } }>(denied);
   console.log(`  unrelated employee (Mallory) -> HTTP ${denied.status} ${deniedBody.error.code}: ${deniedBody.error.message}`);
 
@@ -198,16 +220,18 @@ async function main(): Promise<void> {
   }
 
   console.log('\n[EXTRA] REVOKE -> PURE STORAGE PURGE + ACCESS_REVOKED AUDIT');
-  const revoke = await del(`/api/employees/${empCreate.employee.id}/documents/${docId}`, empLogin.token);
+  const revoke = await del(`/api/employees/${empCreate.employee.id}/documents/${docId}`, employee.token);
   const revokeBody = await json<{ document: { status: string } }>(revoke);
   console.log(`  revoke HTTP ${revoke.status}; document status -> ${revokeBody.document.status}`);
-  const afterRevoke = await get(`/api/employees/${empCreate.employee.id}/documents/${docId}`, empLogin.token);
+  const afterRevoke = await get(`/api/employees/${empCreate.employee.id}/documents/${docId}`, employee.token);
   console.log(`  download after revoke -> HTTP ${afterRevoke.status}`);
   console.log(`  ciphertext object purged from storage? ${existsSync(blobPath) ? 'NO (still present)' : 'YES'}`);
 
-  server.close();
-  ctx.close();
-  rmSync(workDir, { recursive: true, force: true });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    ctx.close();
+    rmSync(workDir, { recursive: true, force: true });
+  }
 }
 
 async function listen(app: ReturnType<typeof createApp>): Promise<Server & { port: number }> {

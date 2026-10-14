@@ -6,6 +6,7 @@ import { NETWORK_SUBMITTABLE_EVENT_TYPES, type LedgerBridge } from '../src/ledge
 class FakeLedger implements LedgerBridge {
   readonly enabled: boolean;
   calls: Array<{ eventType: string; actorId: string; subjectId: string; payloadJson: string }> = [];
+  encryptedDocuments: Array<{ actorId: string; employeeId: string; documentId: string; metadataJson: string; ciphertextBase64: string }> = [];
   failNext = false;
 
   constructor(enabled = true) {
@@ -19,6 +20,15 @@ class FakeLedger implements LedgerBridge {
       throw new Error('network unreachable');
     }
     return { committed: true, seq: this.calls.length, txId: `tx-${this.calls.length}`, hash: 'h' };
+  }
+
+  async submitEncryptedDocument(actorId: string, employeeId: string, documentId: string, metadataJson: string, ciphertextBase64: string) {
+    this.encryptedDocuments.push({ actorId, employeeId, documentId, metadataJson, ciphertextBase64 });
+    return { committed: true, seq: this.calls.length + this.encryptedDocuments.length, txId: 'tx-doc', hash: 'h' };
+  }
+
+  async queryEncryptedDocument() {
+    return { ciphertextBase64: '', ciphertextSha256: '' };
   }
 
   async query() {

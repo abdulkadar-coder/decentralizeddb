@@ -3,13 +3,16 @@ import type { LocalBlockchain } from '../../blockchain/blockchain.js';
 import { errors } from '../../errors.js';
 import {
   NETWORK_SUBMITTABLE_EVENT_TYPES,
+  SMS_OTP_EVENT_TYPES,
+  TOTP_EVENT_TYPES,
   type LedgerBridge,
 } from '../../ledger/types.js';
 
 /**
  * Audit service - records tamper-evident audit transactions and exposes the
- * readable chain + validation. Only metadata is stored; never plaintext or
- * encryption keys.
+ * readable chain + validation. Audit records hold metadata only. When an admin
+ * explicitly submits a proof, the Fabric chaincode stores its encrypted bytes
+ * separately; plaintext and encryption keys are never written on-chain.
  *
  * When a remote permissioned ledger is enabled (phase 2), supported event
  * types are submitted to the Fabric network FIRST - the network commit is the
@@ -36,6 +39,7 @@ export class AuditService {
       subjectId?: string;
       payload?: AuditTransaction['payload'];
       timestamp?: string;
+      submitToNetwork?: boolean;
     } = {},
   ): Promise<Block> {
     const tx: AuditTransaction = {
@@ -48,7 +52,7 @@ export class AuditService {
     };
 
     const bridge = this.networkBridge();
-    if (bridge && NETWORK_SUBMITTABLE_EVENT_TYPES.has(type)) {
+    if (bridge && opts.submitToNetwork !== false && NETWORK_SUBMITTABLE_EVENT_TYPES.has(type)) {
       try {
         await bridge.submitAudit(
           type,
@@ -61,6 +65,10 @@ export class AuditService {
           `Fabric ledger submit failed (event ${type} NOT committed to the network): ${String(cause)}`,
         );
       }
+    }
+    // Auth-code events (TOTP/SMS) are local-only
+    else if (!TOTP_EVENT_TYPES.has(type) && !SMS_OTP_EVENT_TYPES.has(type)) {
+      // Other non-network types are still recorded locally without error
     }
 
     return this.blockchain.append(tx);

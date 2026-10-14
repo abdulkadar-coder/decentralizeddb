@@ -7,15 +7,20 @@ export type Db = DatabaseSync;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
-  id            TEXT PRIMARY KEY,
-  username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  password_hash TEXT NOT NULL,
-  role          TEXT NOT NULL CHECK (role IN ('ADMIN','MANAGER','EMPLOYEE')),
-  display_name  TEXT NOT NULL,
-  employee_id   TEXT UNIQUE,
-  is_active     INTEGER NOT NULL DEFAULT 1,
-  created_at    TEXT NOT NULL,
-  updated_at    TEXT NOT NULL
+  id                  TEXT PRIMARY KEY,
+  username            TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  password_hash       TEXT,
+  role                TEXT NOT NULL CHECK (role IN ('ADMIN','MANAGER','EMPLOYEE')),
+  display_name        TEXT NOT NULL,
+  employee_id         TEXT UNIQUE,
+  is_active           INTEGER NOT NULL DEFAULT 1,
+  created_at          TEXT NOT NULL,
+  updated_at          TEXT NOT NULL,
+  totp_secret_enc     TEXT,
+  totp_enabled        INTEGER NOT NULL DEFAULT 0,
+  totp_verified_at    TEXT,
+  totp_created_at     TEXT,
+  recovery_codes_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS employees (
@@ -28,6 +33,7 @@ CREATE TABLE IF NOT EXISTS employees (
   managed_by  TEXT REFERENCES employees(id) ON DELETE SET NULL,
   is_active   INTEGER NOT NULL DEFAULT 1,
   version     INTEGER NOT NULL DEFAULT 1,
+  ledger_version INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
 );
@@ -61,6 +67,15 @@ CREATE TABLE IF NOT EXISTS audit_blocks (
   prev_hash TEXT NOT NULL,
   hash      TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS sms_otp_codes (
+  user_id    TEXT PRIMARY KEY,
+  code_hash  TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used       INTEGER NOT NULL DEFAULT 0,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
 `;
 
 /** Opens the SQLite database, creating the file and schema when missing. */
@@ -73,6 +88,10 @@ export function openDatabase(dbFile: string): Db {
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA busy_timeout = 5000;');
   db.exec(SCHEMA);
+  const employeeColumns = db.prepare('PRAGMA table_info(employees)').all() as Array<{ name: string }>;
+  if (!employeeColumns.some((column) => column.name === 'ledger_version')) {
+    db.exec('ALTER TABLE employees ADD COLUMN ledger_version INTEGER NOT NULL DEFAULT 0;');
+  }
   logger.debug('db', 'database ready', { dbFile: dbFile === ':memory:' ? ':memory:' : dbFile });
   return db;
 }

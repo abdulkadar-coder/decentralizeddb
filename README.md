@@ -9,7 +9,7 @@ demonstration guide.
 
 A Node.js/TypeScript REST API with a same-origin vanilla-JS SPA frontend:
 
-- Authentication (scrypt password hashing, HS256 JWT) and Role-Based Access Control (ADMIN / MANAGER / EMPLOYEE)
+- Passwordless authenticator, one-time recovery and optional SMS sign-in with HS256 JWT and Role-Based Access Control (ADMIN / MANAGER / EMPLOYEE)
 - Employee CRUD with strict ownership enforcement
 - **AES-256-GCM** document encryption with **Additional Authenticated Data (AAD)** context binding
 - HKDF-derived, versioned data-encryption keys behind a `KeyManager` interface
@@ -35,11 +35,11 @@ a tamper-evident chain.** Below is the full walkthrough of each feature.
   Administrator; afterwards only an ADMIN may create another ADMIN, and any other
   actor is refused with *"Only administrators can create admin accounts"*
   (`service.ts:99-112`).
-- **Passwords never stored.** Passwords are salted-hashed (`src/auth/passwords.ts`);
-  only the hash exists on disk.
-- **Login → JWT.** `POST /api/auth/login` verifies the password and returns a
-  signed HS256 JWT (`sub`, `username`, `role`, optional `employeeId`, expiry).
-  Successful and failed logins both become audit blocks.
+- **Passwordless sign-in.** `POST /api/auth/login` verifies a TOTP code and
+  returns a signed HS256 JWT (`sub`, `username`, role, expiry). One-time
+  recovery codes provide initial access and account recovery; optional SMS OTP
+  is development-only unless a delivery provider is configured. Successful and
+  failed sign-ins are audited.
 - **Fresh-identity RBAC.** The auth middleware re-resolves role + the
   `user → employee` link from the database on **every** request
   (`resolveForAuth`, `service.ts:73`), so role changes, re-links, and account
@@ -86,9 +86,10 @@ a plain `GET /api/audit/chain` from an EMPLOYEE returns HTTP 403.
   decrypts. Two independent checks — the GCM tag **and** the SHA-256 digest —
   mean tampering with any file in `data/objects/` fails the download with
   `ENCRYPTION_FAILURE`.
-- **Revoke** (`service.ts:208`): deletes the ciphertext from storage **and**
-  marks the record `REVOKED`, so later downloads are 404/403. Emits
-  `ACCESS_REVOKED`.
+- **Revoke** (`service.ts:208`): deletes the ciphertext from object storage and
+  marks the record `REVOKED`, so later app downloads are 404/403. Emits
+  `ACCESS_REVOKED`. An encrypted copy already committed to Fabric remains in its
+  append-only ledger.
 - **Limits:** empty uploads rejected; > 10 MB → 413.
 
 ### 5. Storage backends — `src/storage/`
@@ -113,7 +114,11 @@ opaque UUID keys, credentials from env only). Adapters only ever see sealed data
   `npm run chain:restore` (see *Demo script*).
 - **Fabric bridge (Phase 2):** with `LEDGER_BACKEND=fabric`, submittable events
   are committed to the permissioned multi-org network first (authoritative),
-  with the local chain as a mirror (`audit/service.ts:50-66`).
+  with the local chain as a mirror. Employee details and proof uploads remain
+  pending until an admin explicitly pushes them to Fabric. The push stores each
+  encrypted proof file in ledger state and commits its ciphertext digest; files
+  remain encrypted, and Fabric's append-only history means revocation cannot
+  erase an on-chain copy.
 
 ### 7. API hardening — `src/middleware/`, `src/validation.ts`
 
@@ -139,8 +144,8 @@ Dev-only defaults are shipped for convenience; production must set real secrets
 
 ### 10. Verification tooling
 
-- `npm run check` — typecheck + lint + **69 tests**.
-- `npm run e2e` — **38 live endpoint checks** against a running server.
+- `npm run check` — typecheck + lint + Vitest suite (**115 passed, 3 MinIO integration tests skipped without MinIO**).
+- `npm run e2e` — **39 live workflow checks** against a running server.
 - `node scripts/headless-check.mjs` — **6/6 real-Chrome click-throughs**
   (sign-in → dashboard → employees → audit → logout).
 - `npm run chain:tamper|verify|restore` — live blockchain tamper demonstration.
@@ -155,7 +160,7 @@ Dev-only defaults are shipped for convenience; production must set real secrets
   validation and error toasts. CSP-compliant (no inline handlers), all user
   text escaped (XSS-safe).
 - `npm run e2e` — live end-to-end verifier against the running API
-  (`http://127.0.0.1:3000`, override with `E2E_URL`). **38/38 checks green** on
+  (`http://127.0.0.1:3000`, override with `E2E_URL`). **39/39 checks green** on
   a fresh database (auth, RBAC, ownership, encryption-at-rest proof, authorized
   download, 401/403 denials, hash-chain integrity, revoke/purge).
 - Security review and honest future-enhancement list: `docs/SECURITY.md`.
@@ -186,9 +191,12 @@ policy) records authoring events via `src/ledger/fabric.ts`
   on-chain hash-chain validation and the committed records.
 - Submittable event types (`EMPLOYEE_CREATED`, `EMPLOYEE_UPDATED`,
   `ROLE_CHANGED`, `DOCUMENT_UPLOADED`, `DOCUMENT_ACCESSED`, `ACCESS_REVOKED`)
-  are submitted to the network **before** any local append; on network failure
-  the call fails with `LEDGER_FAILURE` (503) and nothing is stored locally —
-  the network is authoritative, never a "best effort footer".
+  can be submitted to the network. Employee details and encrypted proof files are
+  submitted only after an admin selects **Push details and proof to Fabric** on
+  the employee page. Each encrypted file is committed in a separate
+  `DOCUMENT_UPLOADED` transaction; the employee fingerprint is submitted after
+  the files. Other events submit automatically. If a network submission fails,
+  its corresponding audit block is not appended.
 - Run/operate: see `fabric/README.md`. Honest design + limitations:
   `docs/PHASE2_NETWORK_DESIGN.md` (single orderer, dev keys, permissioned).
 - Report with real run transcript: `docs/PHASE2_REPORT.md`.
@@ -224,7 +232,7 @@ npm run demo
 npm start
 # Health check:  GET http://localhost:3000/api/health
 
-# 5. While it runs, verify the full Phase 3 live flow (38 checks)
+# 5. While it runs, verify the full Phase 3 live flow (39 checks)
 npm run e2e
 ```
 
@@ -373,7 +381,8 @@ never plaintext documents or encryption keys.
 | PATCH | `/api/employees/:id` | auth | Update (scoped fields per role) |
 | DELETE | `/api/employees/:id` | ADMIN | Soft-delete + revoke linked user |
 | POST | `/api/employees/:id/role` | ADMIN | Change role (`ROLE_CHANGED`) |
-| POST | `/api/employees/:id/documents` | auth | Upload (raw bytes, `X-Filename` header) → encrypt+store |
+| POST | `/api/employees/:id/documents` | ADMIN | Add proof (raw bytes, `X-Filename` header) → encrypt+store |
+| POST | `/api/employees/:id/ledger/submit` | ADMIN | Push pending employee details and encrypted proof files to Fabric |
 | GET | `/api/employees/:id/documents` | auth | List document metadata |
 | GET | `/api/employees/:id/documents/:documentId` | auth | **Authorized** decrypt + download |
 | DELETE | `/api/employees/:id/documents/:documentId` | auth | Revoke + purge + `ACCESS_REVOKED` |
@@ -393,7 +402,7 @@ auth-tag verification failures; `STORAGE_FAILURE` covers object-storage outages.
 ## Tests
 
 ```powershell
-npm test          # Vitest, 69 tests (3 MinIO tests skipped unless MINIO_TEST=1)
+npm test          # Vitest (3 MinIO tests skipped unless MINIO_TEST=1)
 npm run typecheck # tsc --noEmit (strict)
 npm run lint      # ESLint flat config
 npm run check     # all three
@@ -430,8 +439,8 @@ manifest) in Phase 3.
 9. Revoke → confirm storage purge + `ACCESS_REVOKED` audit, download → 404
 
 `npm run e2e` performs the same class of checks against a **live running API**
-and prints a `RESULT: N passed, M failed` summary (38/38 on a fresh DB,
-re-runnable with `E2E_ADMIN_USER`/`E2E_ADMIN_PASS` for an existing admin).
+and prints a `RESULT: N passed, M failed` summary (39/39 on a fresh DB,
+re-runnable with `E2E_ADMIN_USER`/`E2E_ADMIN_RECOVERY_CODE` for an existing admin).
 
 `node scripts/headless-check.mjs` drives real Chrome (CDP) through the complete
 SPA flow (6/6 on a fresh DB): sign-in page → authenticated dashboard →

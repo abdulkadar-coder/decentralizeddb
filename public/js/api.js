@@ -83,14 +83,53 @@ export const api = {
   },
 
   // ---- auth helpers ----
-  async login(username, password) {
+  async login(username, code) {
     const token = getToken();
     const headers = new Headers(token ? { Authorization: `Bearer ${token}` } : {});
     headers.set('Content-Type', 'application/json');
-    return body('/api/auth/login', { method: 'POST', headers, body: JSON.stringify({ username, password }) });
+    return body('/api/auth/login', { method: 'POST', headers, body: JSON.stringify({ username, code }) });
+  },
+
+  async recoveryLogin(username, recoveryCode) {
+    const token = getToken();
+    const headers = new Headers(token ? { Authorization: `Bearer ${token}` } : {});
+    headers.set('Content-Type', 'application/json');
+    return body('/api/auth/recovery/login', { method: 'POST', headers, body: JSON.stringify({ username, recoveryCode }) });
+  },
+
+  // SMS OTP (dev mode - the code is shown in the server console / devCode)
+  async smsRequest(username) {
+    const token = getToken();
+    const headers = new Headers(token ? { Authorization: `Bearer ${token}` } : {});
+    headers.set('Content-Type', 'application/json');
+    return body('/api/auth/otp/request', { method: 'POST', headers, body: JSON.stringify({ username }) });
+  },
+
+  async smsLogin(username, code) {
+    const token = getToken();
+    const headers = new Headers(token ? { Authorization: `Bearer ${token}` } : {});
+    headers.set('Content-Type', 'application/json');
+    return body('/api/auth/otp/verify', { method: 'POST', headers, body: JSON.stringify({ username, code }) });
   },
 
   async me() {
     return body('/api/auth/me', { method: 'GET', headers: headersFor() });
+  },
+
+  // TOTP management
+  async totpStatus() {
+    return body('/api/auth/totp/status', { method: 'GET', headers: headersFor() });
+  },
+
+  async totpSetup() {
+    return body('/api/auth/totp/setup', { method: 'POST', headers: headersFor() });
+  },
+
+  async totpVerify(code) {
+    return body('/api/auth/totp/verify', { method: 'POST', headers: headersFor(), body: JSON.stringify({ code }) });
+  },
+
+  async totpDisable(recoveryCode) {
+    return body('/api/auth/totp', { method: 'DELETE', headers: headersFor(), body: JSON.stringify({ recoveryCode }) });
   },
 };

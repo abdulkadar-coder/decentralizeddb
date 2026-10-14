@@ -2,7 +2,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist/', 'node_modules/', 'data/', '*.config.js', '*.config.mjs', 'chaincode/'],
+    ignores: ['dist/', 'node_modules/', 'data/', '*.config.js', '*.config.mjs', 'chaincode/', 'fabric/'],
   },
   ...tseslint.configs.recommended,
   {

@@ -75,7 +75,7 @@ function renderNetwork(net) {
           </tbody>
         </table>`
       : '<div class="muted small">No committed records yet.</div>'}
-    <div class="proto-note">In this demo the Fabric network commits only <code>AUTH_LOGIN</code>, <code>DOCUMENT_UPLOAD</code>, <code>DOCUMENT_DATA_ACCESS</code>, <code>DOCUMENT_REVOKE</code> and <code>EMPLOYEE_DELETE</code> events.</div>
+    <div class="proto-note">Fabric ledger is ${net.connected ? 'connected' : 'disconnected'}.</div>
   `;
 }
 

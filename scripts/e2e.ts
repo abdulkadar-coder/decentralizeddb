@@ -24,7 +24,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { env } from 'node:process';
 import { resolve } from 'node:path';
-import { PROJECT_ROOT } from '../src/config.js';
+import { loadEnvFile, PROJECT_ROOT } from '../src/config.js';
+
+// Match the server's project .env so storage and database inspection target the
+// same local instance. Existing process variables (for CI/isolated runs) win.
+loadEnvFile();
 
 const base = (env.E2E_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, '');
 const stamp = Date.now().toString(36);
@@ -77,26 +81,45 @@ async function del(path: string, token: string): Promise<Response> {
 const divider = '='.repeat(78);
 
 async function adminSession(): Promise<string> {
-  const user = env.E2E_ADMIN_USER ?? `e2e-admin${suffix}`;
-  const pass = env.E2E_ADMIN_PASS ?? 'admin-secure-password-1';
-  let res = await post('/api/auth/login', { username: user, password: pass });
-  if (res.status === 200) {
-    return (await json<{ token: string }>(res)).token;
+  const configuredUser = env.E2E_ADMIN_USER;
+  const recoveryCode = env.E2E_ADMIN_RECOVERY_CODE;
+  if (configuredUser && recoveryCode) {
+    const login = await post('/api/auth/recovery/login', { username: configuredUser, recoveryCode });
+    const body = await json<{ token?: string }>(login);
+    if (login.ok && body.token) return body.token;
+    throw new Error(`Could not log in configured ADMIN with recovery code (HTTP ${login.status}).`);
   }
-  res = await post('/api/auth/register', { username: user, password: pass, displayName: 'E2E Admin', role: 'ADMIN' });
-  if (res.status === 201) {
-    res = await post('/api/auth/login', { username: user, password: pass });
+
+  if (configuredUser) {
+    throw new Error('Set E2E_ADMIN_RECOVERY_CODE with E2E_ADMIN_USER to use an existing administrator.');
   }
-  const token = res.status === 200 ? (await json<{ token: string }>(res)).token : '';
-  if (!token) {
-    check('admin session established', false, `HTTP ${res.status}`);
+  const user = `e2e-admin${suffix}`;
+  const registration = await post('/api/auth/register', { username: user, displayName: 'E2E Admin', role: 'ADMIN' });
+  const registered = await json<{ recoveryCodes?: string[] }>(registration);
+  if (!registration.ok || !registered.recoveryCodes?.[0]) {
     throw new Error(
-      `Could not bootstrap/login an ADMIN. The database already has an ADMIN and no credentials were ` +
-        `supplied. Reset the database (stop the app, delete data/, restart) or provide E2E_ADMIN_USER / ` +
-        `E2E_ADMIN_PASS for an existing bootstrap admin.`,
+      `Could not bootstrap an ADMIN (HTTP ${registration.status}). If this database already has an ADMIN, ` +
+        'set E2E_ADMIN_USER and E2E_ADMIN_RECOVERY_CODE.',
     );
   }
-  return token;
+  const login = await post('/api/auth/recovery/login', { username: user, recoveryCode: registered.recoveryCodes[0] });
+  const body = await json<{ token?: string }>(login);
+  if (!login.ok || !body.token) throw new Error(`Could not log in bootstrapped ADMIN (HTTP ${login.status}).`);
+  return body.token;
+}
+
+async function registerAndLogin(username: string, displayName: string, role: string, token?: string) {
+  const registration = await post('/api/auth/register', { username, displayName, role }, token);
+  const registered = await json<{ user?: { id: string }; recoveryCodes?: string[] }>(registration);
+  if (!registration.ok || !registered.user || !registered.recoveryCodes?.[0]) {
+    throw new Error(`Could not register ${role} '${username}' (HTTP ${registration.status}).`);
+  }
+  const login = await post('/api/auth/recovery/login', { username, recoveryCode: registered.recoveryCodes[0] });
+  const session = await json<{ token?: string; user?: { id: string } }>(login);
+  if (!login.ok || !session.token || !session.user) {
+    throw new Error(`Could not log in '${username}' with its issued recovery code (HTTP ${login.status}).`);
+  }
+  return { token: session.token, user: session.user };
 }
 
 async function main(): Promise<void> {
@@ -121,24 +144,12 @@ async function main(): Promise<void> {
   const empUser = `e2e-emp${suffix}`;
   const mgrUser = `e2e-mgr${suffix}`;
   const otherUser = `e2e-other${suffix}`;
-  for (const [u, p, dn, role] of [
-    [empUser, 'employee-secure-password-1', 'E2E Employee', 'EMPLOYEE'],
-    [mgrUser, 'manager-secure-password-1', 'E2E Manager', 'MANAGER'],
-    [otherUser, 'other-secure-password-1', 'E2E Outsider', 'EMPLOYEE'],
-  ] as const) {
-    const r = await post('/api/auth/register', { username: u, password: p, displayName: dn, role }, role === 'EMPLOYEE' ? undefined : adminToken);
-    check(`register ${role.toLowerCase()} user '${u}'`, r.status === 201, `HTTP ${r.status}`);
-  }
-
-  const empLogin = await json<{ token: string; user: { id: string } }>(
-    await post('/api/auth/login', { username: empUser, password: 'employee-secure-password-1' }),
-  );
-  const mgrLogin = await json<{ token: string; user: { id: string } }>(
-    await post('/api/auth/login', { username: mgrUser, password: 'manager-secure-password-1' }),
-  );
-  const otherLogin = await json<{ token: string; user: { id: string } }>(
-    await post('/api/auth/login', { username: otherUser, password: 'other-secure-password-1' }),
-  );
+  const empLogin = await registerAndLogin(empUser, 'E2E Employee', 'EMPLOYEE');
+  check(`register employee user '${empUser}'`, Boolean(empLogin.token));
+  const mgrLogin = await registerAndLogin(mgrUser, 'E2E Manager', 'MANAGER', adminToken);
+  check(`register manager user '${mgrUser}'`, Boolean(mgrLogin.token));
+  const otherLogin = await registerAndLogin(otherUser, 'E2E Outsider', 'EMPLOYEE');
+  check(`register employee user '${otherUser}'`, Boolean(otherLogin.token));
 
   // 2. Admin creates employees (RBAC: non-admin is rejected)
   console.log('\n[2] EMPLOYEE CREATION + RBAC');
@@ -177,10 +188,10 @@ async function main(): Promise<void> {
   const rogueRole = await post(`/api/employees/${employeeId}/role`, { role: 'ADMIN' }, empLogin.token);
   check('EMPLOYEE cannot change roles', rogueRole.status === 403, `HTTP ${rogueRole.status}`);
 
-  // 3. Authorized upload -> encrypted at rest
+  // 3. Admin-only proof upload -> encrypted at rest
   console.log('\n[3] DOCUMENT UPLOAD + ENCRYPTED STORAGE');
   const payload = Buffer.from('E2E payroll summary TRN-771 - strictly confidential');
-  const up = await fetch(`${base}/api/employees/${employeeId}/documents`, {
+  const ownerUpload = await fetch(`${base}/api/employees/${employeeId}/documents`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${empLogin.token}`,
@@ -189,8 +200,19 @@ async function main(): Promise<void> {
     },
     body: payload,
   });
+  check('employee cannot add proof', ownerUpload.status === 403, `HTTP ${ownerUpload.status}`);
+
+  const up = await fetch(`${base}/api/employees/${employeeId}/documents`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${adminToken}`,
+      'x-filename': 'trn-771.pdf',
+      'content-type': 'application/pdf',
+    },
+    body: payload,
+  });
   const upBody = await json<{ document: { id: string; sizeBytes: number; status: string } }>(up);
-  check('authorized upload (owner)', up.status === 201, `HTTP ${up.status}`);
+  check('admin proof upload', up.status === 201, `HTTP ${up.status}`);
   const docId = upBody.document.id;
 
   check('claim: encryption before storage', true, 'verified via ciphertext-at-rest check below');

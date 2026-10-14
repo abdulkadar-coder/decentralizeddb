@@ -8,6 +8,8 @@ import { FabricLedger } from './ledger/fabric.js';
 import type { LedgerBridge } from './ledger/types.js';
 import { AuditService } from './modules/audit/service.js';
 import { AuthService } from './modules/auth/service.js';
+import { TotpService } from './modules/auth/totp.service.js';
+import { SmsOtpService } from './modules/auth/smsOtp.service.js';
 import { EmployeesService } from './modules/employees/service.js';
 import { DocumentsService } from './modules/documents/service.js';
 import { UsersService } from './modules/users/service.js';
@@ -21,6 +23,8 @@ export interface AppContext {
   ledger: LedgerBridge | null;
   audits: AuditService;
   auth: AuthService;
+  totp: TotpService;
+  smsOtp: SmsOtpService;
   employees: EmployeesService;
   documents: DocumentsService;
   users: UsersService;
@@ -38,8 +42,10 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
   await blockchain.init();
   const ledger = config.fabric.enabled ? new FabricLedger(config.fabric) : null;
   const audits = new AuditService(blockchain, ledger ?? undefined);
-  const auth = new AuthService(db, audits, { jwtSecret: config.jwtSecret, tokenTtlSeconds: 3600 });
-  const employees = new EmployeesService(db, audits);
+  const auth = new AuthService(db, audits, { jwtSecret: config.jwtSecret, tokenTtlSeconds: config.tokenTtlSeconds, totp: config.totp });
+  const totp = new TotpService(db, audits, config.totp, config.jwtSecret);
+  const smsOtp = new SmsOtpService(db, audits, config.sms);
+  const employees = new EmployeesService(db, audits, storage);
   const documents = new DocumentsService(db, config, storage, keys, audits);
   const users = new UsersService(db);
 
@@ -52,6 +58,8 @@ export async function createAppContext(config: AppConfig): Promise<AppContext> {
     ledger,
     audits,
     auth,
+    totp,
+    smsOtp,
     employees,
     documents,
     users,

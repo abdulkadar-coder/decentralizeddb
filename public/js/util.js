@@ -93,7 +93,7 @@ export function confirmDialog(message) {
   return new Promise((resolve) => {
     openModal({
       title: 'Are you sure?',
-      body: `<p style="margin:0">${escapeHtml(message)}</p>`,
+      body: `<p style="margin:0;white-space:pre-wrap">${escapeHtml(message)}</p>`,
       actions: `
         <button class="btn secondary" data-confirm-cancel>Cancel</button>
         <button class="btn danger" data-confirm-ok>Confirm</button>

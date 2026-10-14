@@ -35,6 +35,24 @@ export function testConfig(overrides: TestOverrides = {}): { config: AppConfig; 
     blockchainBackend: 'sqlite',
     ledgerBackend: 'off',
     fabric: { ...defaultFabricOptions(), enabled: false },
+    totp: {
+      encryptionKey: Buffer.from('test-totp-encryption-key-0123456789abcdef', 'utf8').subarray(0, 32),
+      issuer: 'TestApp',
+      digits: 6,
+      period: 30,
+      window: 1,
+      recoveryCount: 8,
+      recoveryLen: 10,
+      acceptAnyCode: false,
+    },
+    sms: {
+      enabled: true,
+      toNumber: '7094762770',
+      ttlSeconds: 300,
+      digits: 6,
+      devMode: true,
+    },
+    tokenTtlSeconds: 900,
   };
   return { config: { ...base, ...overrides }, workDir };
 }

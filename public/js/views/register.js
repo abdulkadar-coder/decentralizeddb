@@ -12,7 +12,7 @@ export async function mountRegister(container) {
         <div class="auth-panel">
           <span class="auth-kicker">zero-trust · hrms</span>
           <h1>Create account</h1>
-          <div class="sub">Employees self-register. MANAGER accounts must be created by an administrator.</div>
+          <div class="sub">Employees self-register. ADMIN/MANAGER accounts are gated by existing administrators.</div>
           <div id="reg-err" class="alert error hidden"></div>
           <form id="reg-form">
             <div class="form-field">
@@ -23,11 +23,6 @@ export async function mountRegister(container) {
             <div class="form-field">
               <label for="reg-display">Display name</label>
               <input id="reg-display" name="displayName" required maxlength="80" />
-            </div>
-            <div class="form-field">
-              <label for="reg-password">Password</label>
-              <input id="reg-password" name="password" type="password" required autocomplete="new-password" />
-              <div class="hint">At least 10 characters.</div>
             </div>
             <div class="form-field">
               <label for="reg-role">Role</label>
@@ -64,7 +59,13 @@ export async function mountRegister(container) {
 
   const form = container.querySelector('#reg-form');
   const usernameField = container.querySelector('#reg-username');
-  const passwordField = container.querySelector('#reg-password');
+
+  function showError(message) {
+    const errBox = container.querySelector('#reg-err');
+    errBox.textContent = message;
+    errBox.classList.remove('hidden');
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const errBox = container.querySelector('#reg-err');
@@ -72,36 +73,49 @@ export async function mountRegister(container) {
 
     const username = usernameField.value.trim();
     const displayName = container.querySelector('#reg-display').value.trim();
-    const password = passwordField.value;
     const role = container.querySelector('#reg-role').value;
 
     if (!/^[a-zA-Z0-9_.-]{3,40}$/.test(username)) {
-      errBox.textContent = 'Username must be 3–40 characters: letters, digits, dot, dash, underscore.';
-      errBox.classList.remove('hidden');
-      return;
-    }
-    if (password.length < 10) {
-      errBox.textContent = 'Password must be at least 10 characters.';
-      errBox.classList.remove('hidden');
+      showError('Username must be 3–40 characters: letters, digits, dot, dash, underscore.');
       return;
     }
     if (!displayName) {
-      errBox.textContent = 'Display name is required.';
-      errBox.classList.remove('hidden');
+      showError('Display name is required.');
       return;
     }
 
     const btn = container.querySelector('#reg-btn');
     setBusy(btn, true, 'Creating…');
     try {
-      await api.post('/api/auth/register', { username, displayName, password, role });
-      toast('Account created. Sign in to continue.', 'ok');
-      navigate('login');
+      const data = await api.post('/api/auth/register', { username, displayName, role });
+      showRecoveryCodes(container, data);
     } catch (err) {
-      errBox.textContent = err.message || 'Registration failed.';
-      errBox.classList.remove('hidden');
+      showError(err.message || 'Registration failed.');
     } finally {
       setBusy(btn, false);
     }
+  });
+}
+
+function showRecoveryCodes(container, data) {
+  const codes = Array.isArray(data && data.recoveryCodes) ? data.recoveryCodes : null;
+  const suffix = data && data.user && data.user.role ? ` (${escapeHtml(data.user.role)})` : '';
+  render(container.querySelector('.auth-panel'), `
+    <span class="auth-kicker">zero-trust · hrms</span>
+    <h1>Account created${suffix}</h1>
+    <div class="alert ok" role="status">These one-time recovery codes are the only way in until you enroll an authenticator. They will not be shown again.</div>
+    <div class="recovery-codes" data-recover-codes>
+      ${codes
+        ? codes.map((c) => `<span class="mono">${escapeHtml(String(c))}</span>`).join('')
+        : '<span class="muted">No recovery codes returned.</span>'}
+    </div>
+    <div class="sub">Write them down or store them in a password manager, then continue.</div>
+    <div class="form-actions">
+      <button class="btn" id="reg-saved" type="button">I've saved my codes</button>
+    </div>
+  `);
+  container.querySelector('#reg-saved').addEventListener('click', () => {
+    toast('Sign in with a recovery code, then enroll your authenticator.', 'info');
+    navigate('login');
   });
 }

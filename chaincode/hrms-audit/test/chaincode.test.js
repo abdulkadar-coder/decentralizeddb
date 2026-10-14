@@ -55,6 +55,45 @@ test('submitAudit appends a fully-populated record and increments seq', async ()
   assert.equal((await contract.querySeq(ctx)).seq, 2);
 });
 
+test('submitEncryptedDocument stores ciphertext in ledger state and links its digest in the audit record', async () => {
+  const ctx = freshCtx();
+  const ciphertext = Buffer.concat([Buffer.alloc(12, 1), Buffer.from('encrypted-bytes'), Buffer.alloc(16, 2)]);
+  const metadata = { filename: 'proof.pdf', ciphertextSha256: sha256Hex(ciphertext), integritySha256: 'a'.repeat(64) };
+  const record = await contract.submitEncryptedDocument(
+    ctx,
+    'admin-123',
+    'emp-0050',
+    'doc-0001',
+    JSON.stringify(metadata),
+    ciphertext.toString('base64'),
+  );
+
+  assert.equal(record.eventType, 'DOCUMENT_UPLOADED');
+  assert.equal(record.payload.ciphertextSha256, metadata.ciphertextSha256);
+  assert.deepEqual(ctx.stub.state.get('encrypted-document:doc-0001'), ciphertext);
+  const fetched = await contract.queryEncryptedDocument(ctx, 'doc-0001');
+  assert.equal(fetched.ciphertextBase64, ciphertext.toString('base64'));
+  assert.equal(fetched.ciphertextSha256, metadata.ciphertextSha256);
+  assert.deepEqual(await contract.verifyChain(ctx), { seq: 1, intact: true, issues: [] });
+});
+
+test('encrypted document submission is idempotent and rejects changed bytes for the same id', async () => {
+  const ctx = freshCtx();
+  const ciphertext = Buffer.concat([Buffer.alloc(12, 1), Buffer.from('encrypted-bytes'), Buffer.alloc(16, 2)]);
+  const metadata = { ciphertextSha256: sha256Hex(ciphertext) };
+  const args = ['admin-123', 'emp-0050', 'doc-0001', JSON.stringify(metadata), ciphertext.toString('base64')];
+  const first = await contract.submitEncryptedDocument(ctx, ...args);
+  const retry = await contract.submitEncryptedDocument(ctx, ...args);
+  assert.equal(retry.seq, first.seq);
+  assert.equal((await contract.querySeq(ctx)).seq, 1);
+
+  const changed = Buffer.concat([Buffer.alloc(12, 3), Buffer.from('different-bytes'), Buffer.alloc(16, 4)]);
+  await assert.rejects(
+    contract.submitEncryptedDocument(ctx, 'admin-123', 'emp-0050', 'doc-0001', JSON.stringify({ ciphertextSha256: sha256Hex(changed) }), changed.toString('base64')),
+    /already contains different encrypted data/,
+  );
+});
+
 test('timestamp comes from the peer transaction timestamp, not the caller', async () => {
   const ctx1 = freshCtx();
   ctx1.stub.setTxTimestamp(1_800_000_000, 0);

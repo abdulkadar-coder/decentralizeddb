@@ -9,9 +9,8 @@
 // Requires Chrome or Edge (paths auto-detected below) and Node >= 22 (global
 // WebSocket). The server must already be running on http://127.0.0.1:3000.
 
-const BASE = 'http://127.0.0.1:3000';
+const BASE = (process.env.E2E_URL ?? 'http://127.0.0.1:3000').replace(/\/$/, '');
 const ADMIN_USER = `hl-admin-${Date.now().toString(36)}`;
-const ADMIN_PASS = 'admin-secure-password-1';
 
 const CHROME_CANDIDATES = [
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -22,6 +21,7 @@ const CHROME_CANDIDATES = [
 
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 let pass = 0;
 let fail = 0;
@@ -46,24 +46,38 @@ async function post(path, body, token) {
   return res;
 }
 
-// ---- bootstrap admin via the real API ----
+// ---- bootstrap or authenticate an admin via the real API ----
 let token;
 let user;
 {
-  let res = await post('/api/auth/login', { username: ADMIN_USER, password: ADMIN_PASS });
-  if (res.status !== 200) {
-    res = await fetch(BASE + '/api/auth/register', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS, displayName: 'HL Admin', role: 'ADMIN' }),
+  let login;
+  if (process.env.E2E_ADMIN_USER && process.env.E2E_ADMIN_RECOVERY_CODE) {
+    login = await post('/api/auth/recovery/login', {
+      username: process.env.E2E_ADMIN_USER,
+      recoveryCode: process.env.E2E_ADMIN_RECOVERY_CODE,
+    });
+  } else {
+    const registration = await post('/api/auth/register', {
+      username: ADMIN_USER,
+      displayName: 'HL Admin',
+      role: 'ADMIN',
+    });
+    const registered = await registration.json();
+    if (registration.status !== 201 || !registered.recoveryCodes?.[0]) {
+      throw new Error(
+        `Could not bootstrap an ADMIN (HTTP ${registration.status}). On an existing database set ` +
+          'E2E_ADMIN_USER and E2E_ADMIN_RECOVERY_CODE.',
+      );
+    }
+    login = await post('/api/auth/recovery/login', {
+      username: ADMIN_USER,
+      recoveryCode: registered.recoveryCodes[0],
     });
   }
-  const login = res.status === 200
-    ? res
-    : await post('/api/auth/login', { username: ADMIN_USER, password: ADMIN_PASS });
   const body = await login.json();
   token = body.token;
   user = body.user;
+  if (!login.ok || !token || !user) throw new Error(`Admin login failed (HTTP ${login.status}).`);
   check('backstage: admin session obtained', Boolean(token));
 }
 
@@ -74,7 +88,7 @@ const chrome = spawn(chromePath, [
   '--disable-gpu',
   '--no-sandbox',
   '--remote-debugging-port=' + DEBUG_PORT,
-  '--user-data-dir=' + process.env.TEMP.replaceAll('\\', '/') + '/opencode/hl-profile-' + Date.now(),
+  '--user-data-dir=' + tmpdir().replaceAll('\\', '/') + '/opencode/hl-profile-' + Date.now(),
   'about:blank',
 ], { stdio: 'ignore' });
 

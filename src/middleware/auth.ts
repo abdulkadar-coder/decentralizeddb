@@ -84,19 +84,36 @@ export function requireRoles(...roles: Role[]) {
   };
 }
 
-/** Attach `req.auth` from claims without rejecting (for optional-auth routes). */
-export function optionalAuth(secret: string) {
+/** Attach `req.auth` without rejecting anonymous requests. When a bearer token
+ * is present, resolve its identity against the database just like requireAuth
+ * so optional-auth routes cannot authorize from stale role claims. */
+export function optionalAuth(
+  secret: string,
+  fetchUser?: (userId: string) => ResolvedIdentity | null,
+) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     const token = parseBearer(req.header('authorization'));
     if (token) {
       const claims = verifyToken(secret, token);
       if (claims) {
-        req.auth = {
-          userId: claims.sub,
-          username: claims.username,
-          role: claims.role,
-          employeeId: claims.employeeId ?? null,
-        };
+        const fresh = fetchUser?.(claims.sub);
+        const identity = fetchUser
+          ? fresh && fresh.isActive === 1
+            ? fresh
+            : null
+          : {
+              role: claims.role,
+              employeeId: claims.employeeId ?? null,
+              isActive: 1,
+            };
+        if (identity) {
+          req.auth = {
+            userId: claims.sub,
+            username: claims.username,
+            role: identity.role,
+            employeeId: identity.employeeId,
+          };
+        }
       }
     }
     next();

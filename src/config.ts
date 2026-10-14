@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FabricLedgerOptions } from './ledger/types.js';
@@ -17,8 +17,6 @@ function findProjectRoot(start: string): string {
 }
 
 const PROJECT_ROOT = findProjectRoot(__dirname);
-
-const DEV = process.env.NODE_ENV !== 'production';
 
 /** Minimal `.env` loader (no external dependency). Never overrides real env vars. */
 export function loadEnvFile(): void {
@@ -72,10 +70,36 @@ export interface AppConfig {
   blockchainBackend: 'sqlite' | 'memory';
   ledgerBackend: 'off' | 'fabric';
   fabric: FabricLedgerOptions & { enabled: boolean };
+  totp: {
+    encryptionKey: Buffer;
+    issuer: string;
+    digits: number;
+    period: number;
+    window: number;
+    recoveryCount: number;
+    recoveryLen: number;
+    /** DEV-ONLY: when true, any 6-digit code is accepted as a valid
+     * authenticator code. Never enabled outside development. */
+    acceptAnyCode: boolean;
+  };
+  sms: {
+    enabled: boolean;
+    toNumber: string;
+    ttlSeconds: number;
+    digits: number;
+    devMode: boolean;
+  };
+  tokenTtlSeconds: number;
 }
 
 /** Loads configuration. Falls back to random dev-only secrets when absent. */
+function deriveTotpKey(jwtSecret: string): Buffer {
+  return createHash('sha256').update(jwtSecret + '|totp-enc').digest();
+}
+
 export function loadConfig(): AppConfig {
+  const nodeEnv = process.env.NODE_ENV ?? 'development';
+  const isDev = nodeEnv !== 'production';
   const jwtProvided = Boolean(process.env.JWT_SECRET);
   const jwtSecret = process.env.JWT_SECRET || randomBytes(32).toString('base64url');
 
@@ -86,10 +110,11 @@ export function loadConfig(): AppConfig {
 
   const port = Number.parseInt(process.env.PORT ?? '3000', 10);
   const minioPort = Number.parseInt(process.env.MINIO_PORT ?? '9000', 10);
+  const tokenTtlSeconds = Number.parseInt(process.env.TOKEN_TTL_SECONDS ?? '900', 10);
 
   return {
-    nodeEnv: process.env.NODE_ENV ?? 'development',
-    isDev: DEV,
+    nodeEnv,
+    isDev,
     host: process.env.HOST ?? '0.0.0.0',
     port: Number.isFinite(port) && port > 0 ? port : 3000,
     jwtSecret,
@@ -113,6 +138,26 @@ export function loadConfig(): AppConfig {
     fabric: {
       ...defaultFabricOptions(),
       enabled: process.env.LEDGER_BACKEND === 'fabric',
+    },
+    totp: {
+      encryptionKey: process.env.TOTP_ENC_KEY
+        ? Buffer.from(process.env.TOTP_ENC_KEY, 'base64')
+        : deriveTotpKey(jwtSecret),
+      issuer: process.env.TOTP_ISSUER ?? 'ZeroTrust HRMS',
+      digits: Number.parseInt(process.env.TOTP_DIGITS ?? '6', 10),
+      period: Number.parseInt(process.env.TOTP_PERIOD ?? '30', 10),
+      window: Number.parseInt(process.env.TOTP_WINDOW ?? '1', 10),
+      recoveryCount: Number.parseInt(process.env.TOTP_RECOVERY_COUNT ?? '8', 10),
+      recoveryLen: Number.parseInt(process.env.TOTP_RECOVERY_LEN ?? '10', 10),
+      acceptAnyCode: isDev && (process.env.TOTP_ACCEPT_ANY_CODE ?? 'false') === 'true',
+    },
+    tokenTtlSeconds: Number.isFinite(tokenTtlSeconds) && tokenTtlSeconds > 0 ? tokenTtlSeconds : 900,
+    sms: {
+      enabled: (process.env.SMS_OTP_ENABLED ?? 'true') === 'true',
+      toNumber: process.env.SMS_TO_NUMBER ?? '+15555550100',
+      ttlSeconds: Number.parseInt(process.env.SMS_OTP_TTL_SECONDS ?? '300', 10),
+      digits: Number.parseInt(process.env.SMS_OTP_DIGITS ?? '6', 10),
+      devMode: (process.env.SMS_OTP_DEV_MODE ?? 'true') === 'true' && isDev,
     },
   };
 }

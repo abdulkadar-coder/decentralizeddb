@@ -62,13 +62,15 @@ external builder):
 | Function | Args | Description |
 | --- | --- | --- |
 | `submitAudit(eventType, actorId, subjectId, payloadJSON)` | `[string,string,string,string]` | Append a record with the caller's MSP/signer id and peer timestamp. Enforces org membership by construction (endorsement) and internal guards. |
+| `submitEncryptedDocument(actorId, employeeId, documentId, metadataJSON, ciphertextBase64)` | `[string,string,string,string,string]` | Store one AES-GCM envelope in ledger state and append a `DOCUMENT_UPLOADED` record atomically; retries with the same document id and digest are idempotent. |
+| `queryEncryptedDocument(documentId)` | `[string]` | Read the encrypted envelope and its SHA-256 digest from ledger state. |
 | `querySeq()` | `[]` | Current sequence (append counter, `seq` state key). |
 | `queryAll(startSeq, endSeq)` | `[int?,int?]` | Range read of records (defaults `1..seq`). |
 | `queryBySubject(subjectId)` | `[string]` | Records for one subject (rg key range). |
 | `queryByType(eventType)` | `[string]` | Records of one event type. |
 | `verifyChain()` | `[]` | Recompute the hash chain over the stored ledger; returns `{seq, intact, issues[]}`. |
 
-Record schema (metadata only — no document plaintext, no keys):
+Audit record schema (metadata only — no document plaintext, no keys):
 
 ```json
 { "seq": 3, "eventType": "ACCESS_REVOKED", "actorId": "user-4f2a1c",
@@ -78,6 +80,13 @@ Record schema (metadata only — no document plaintext, no keys):
   "txId": "e8213c...4229c",
   "prevHash": "0185779a...e9328e", "hash": "0d9902f1...80b27" }
 ```
+
+Admin-approved document pushes store each AES-GCM envelope separately under an
+opaque document key in Fabric state. The associated `DOCUMENT_UPLOADED` audit
+record contains its ciphertext digest and document metadata, not its bytes.
+Ciphertext values are capped at 10 MiB plus the 28-byte IV/tag envelope. Fabric
+is append-only: revocation removes the off-chain object and blocks app access,
+but cannot erase a ciphertext already committed to the network.
 
 Hash scheme (self-consistent): `record.hash = sha256(canonical(record with
 `hash` omitted))`; the *next* record's `prevHash = sha256(canonical(full stored
@@ -126,9 +135,11 @@ Practical governance facts learned the hard way:
   network; TLS with the org `tlsca`; `checkServerIdentity` validates the peer's
   SAN `peer0.hr.hrms.com` because the TCP endpoint differs from the cert name).
 - Signing identity: `HROrgMSP` admin key/cert from the MSP config dir.
-- Submit: `contract.submit('submitAudit', { arguments, endorsingOrganizations:
-  [HROrgMSP, FinanceOrgMSP] })` → waits for **commit**, returns `{committed,
-  seq, eventType, ...}`.
+- Submit audit events: `contract.submit('submitAudit', { arguments,
+  endorsingOrganizations: [HROrgMSP, FinanceOrgMSP] })` → waits for **commit**.
+- Submit encrypted documents: `contract.submit('submitEncryptedDocument',
+  { arguments, endorsingOrganizations: [HROrgMSP, FinanceOrgMSP] })` → stores
+  ciphertext in ledger state and waits for its commit.
 - Query: `querySeq` + `verifyChain` + `queryAll` mapped into a typed snapshot.
 - `LEDGER_BACKEND=fabric` gates everything; default `off` preserves Phase 1
   behavior exactly (local SQLite blockchain mirror, honestly labeled).

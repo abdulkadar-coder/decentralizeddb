@@ -9,16 +9,18 @@ export function employeeCanManageMe(me, employee) {
   return false; // managers manage direct reports only, resolved server-side
 }
 
+const ROLE_BADGE = { ADMIN: 'ok', MANAGER: 'warn', EMPLOYEE: 'muted' };
+
 export async function mountEmployees(container, session) {
   pageLoading(container);
   let data;
   try {
-    data = await api.get('/api/employees');
+    data = await api.get('/api/employees/directory');
   } catch (err) {
-    render(container, `<div class="page">${err && err.status === 403 ? deniedPanel(err.message) : `<div class="alert error">${escapeHtml(err.message || 'Could not load employees')}</div>`}</div>`);
+    render(container, `<div class="page">${err && err.status === 403 ? deniedPanel(err.message) : `<div class="alert error">${escapeHtml(err.message || 'Could not load accounts')}</div>`}</div>`);
     return;
   }
-  const employees = Array.isArray(data.employees) ? data.employees : [];
+  const accounts = Array.isArray(data.accounts) ? data.accounts : [];
   const isAdmin = session.user.role === 'ADMIN';
 
   render(container, `
@@ -26,25 +28,26 @@ export async function mountEmployees(container, session) {
       <div class="page-head">
         <div>
           <h1>Employees</h1>
-          <div class="sub">${isAdmin ? 'All employees' : session.user.role === 'MANAGER' ? 'Your record and your direct reports' : 'Your employee record'} · ${employees.length} shown</div>
+          <div class="sub">Registered accounts with their roles and authored audit proofs · ${accounts.length} shown</div>
         </div>
         ${isAdmin ? '<button class="btn" id="btn-new-employee">New employee</button>' : ''}
       </div>
 
-      ${employees.length === 0
-        ? emptyState('No employees found.', session.user.role === 'ADMIN' ? 'Create the first employee record to begin.' : 'Your account is not yet linked to an employee record.')
+      ${accounts.length === 0
+        ? emptyState('No accounts found.', isAdmin ? 'No user accounts exist yet.' : 'Your account is not visible here.')
         : `<div class="panel" style="padding:8px 12px">
             <table class="tbl">
-              <thead><tr><th>Name</th><th>Department</th><th>Title</th><th>Link</th><th>Updated</th><th></th></tr></thead>
+              <thead><tr><th>Account</th><th>Role</th><th>Status</th><th>Employee record</th><th>Proofs</th><th>Last proof</th><th></th></tr></thead>
               <tbody>
-                ${employees.map((e) => `
+                ${accounts.map((a) => `
                   <tr>
-                    <td><strong>${escapeHtml(e.fullName)}</strong></td>
-                    <td>${escapeHtml(e.department)}</td>
-                    <td>${escapeHtml(e.title)}</td>
-                    <td>${e.userId ? '<span class="badge ok">linked</span>' : '<span class="badge muted">none</span>'}</td>
-                    <td class="small muted">${fmtDate(e.updatedAt)}</td>
-                    <td class="right">${link(`employees/${e.id}`, 'Open', 'btn secondary small')}</td>
+                    <td><strong>${escapeHtml(a.displayName || a.username)}</strong><div class="small muted">${escapeHtml(a.username)}</div></td>
+                    <td><span class="badge ${ROLE_BADGE[a.role] || 'muted'}">${escapeHtml(a.role)}</span></td>
+                    <td>${a.isActive ? '<span class="badge ok">active</span>' : '<span class="badge muted">inactive</span>'}</td>
+                    <td>${a.employeeName ? `${escapeHtml(a.employeeName)}` : '<span class="badge muted">none</span>'}</td>
+                    <td><strong>${a.proofCount}</strong></td>
+                    <td class="small muted">${a.lastProofAt ? fmtDate(a.lastProofAt) : '—'}</td>
+                    <td class="right">${a.employeeId ? link(`employees/${a.employeeId}`, 'Open', 'btn secondary small') : ''}</td>
                   </tr>`).join('')}
               </tbody>
             </table>
@@ -53,10 +56,17 @@ export async function mountEmployees(container, session) {
   `);
 
   const newBtn = container.querySelector('#btn-new-employee');
-  if (newBtn) newBtn.addEventListener('click', () => openCreateModal(container, employees, session));
+  if (newBtn) newBtn.addEventListener('click', () => openCreateModal(container, session));
 }
 
-function openCreateModal(container, employees, session) {
+async function openCreateModal(container, session) {
+  let employees = [];
+  try {
+    const data = await api.get('/api/employees');
+    employees = Array.isArray(data.employees) ? data.employees : [];
+  } catch {
+    employees = [];
+  }
   const managerOptions = employees
     .map((e) => `<option value="${e.id}">${escapeHtml(e.fullName)}</option>`)
     .join('');

@@ -105,9 +105,9 @@ The following flow was executed and its output is in `docs/TEST_REPORT.md`.
 ## 6. Test commands
 
 ```powershell
-npm run check        # typecheck + lint + vitest (69 passed, 3 MinIO tests skip w/o server)
+npm run check        # typecheck + lint + vitest (3 MinIO tests skip w/o server)
 npm run demo         # self-contained end-to-end demo (in-process server)
-npm run e2e          # live end-to-end verification against http://localhost:3000 (38 checks)
+npm run e2e          # live end-to-end verification against http://localhost:3000 (39 checks)
 npm run build        # production TypeScript build -> dist/
 npm run start:prod   # run the compiled production server
 npm run fabric:probe # Fabric ledger connectivity probe (requires the network up)
@@ -184,7 +184,7 @@ Honesty caveat (say it first, un-asked):
 - [ ] `npm start` → `http://localhost:3000/api/health` returns
       `{"status":"ok",...}`.
 - [ ] `http://localhost:3000/` renders the ZeroTrust HRMS SPA.
-- [ ] `npm run e2e` → `RESULT: 38 passed, 0 failed`.
+- [ ] `npm run e2e` → `RESULT: 39 passed, 0 failed`.
 - [ ] UI: login → create employee → upload → download → audit page shows the
       hash chain → logout.
 - [ ] `npm run chain:verify` reports `VALID` (shows the live hash chain).

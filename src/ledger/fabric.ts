@@ -13,7 +13,7 @@ import type {
   LedgerBridge,
 } from './types.js';
 
-const GRPC_TIMEOUT_MS = 30_000;
+const GRPC_TIMEOUT_MS = 120_000;
 
 /**
  * Client for the permissioned Hyperledger Fabric audit network.
@@ -46,6 +46,28 @@ export class FabricLedger implements LedgerBridge {
     });
     const record = JSON.parse(Buffer.from(result).toString('utf8')) as AuditNetworkRecord;
     return { committed: true, seq: record.seq, txId: record.txId, hash: record.hash };
+  }
+
+  async submitEncryptedDocument(
+    actorId: string,
+    employeeId: string,
+    documentId: string,
+    metadataJson: string,
+    ciphertextBase64: string,
+  ): Promise<AuditNetworkSubmitResult> {
+    const contract = await this.ensure();
+    const result = await contract.submit('submitEncryptedDocument', {
+      arguments: [actorId, employeeId, documentId, metadataJson, ciphertextBase64],
+      ...(this.opts.endorseOrgs.length > 0 ? { endorsingOrganizations: [...this.opts.endorseOrgs] } : {}),
+    });
+    const record = JSON.parse(Buffer.from(result).toString('utf8')) as AuditNetworkRecord;
+    return { committed: true, seq: record.seq, txId: record.txId, hash: record.hash };
+  }
+
+  async queryEncryptedDocument(documentId: string): Promise<{ ciphertextBase64: string; ciphertextSha256: string }> {
+    const contract = await this.ensure();
+    const result = await contract.evaluate('queryEncryptedDocument', { arguments: [documentId] });
+    return JSON.parse(new TextDecoder().decode(result)) as { ciphertextBase64: string; ciphertextSha256: string };
   }
 
   async query(): Promise<AuditNetworkQuery> {

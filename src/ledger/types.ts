@@ -47,6 +47,14 @@ export interface LedgerBridge {
     subjectId: string,
     payloadJson: string,
   ): Promise<AuditNetworkSubmitResult>;
+  submitEncryptedDocument(
+    actorId: string,
+    employeeId: string,
+    documentId: string,
+    metadataJson: string,
+    ciphertextBase64: string,
+  ): Promise<AuditNetworkSubmitResult>;
+  queryEncryptedDocument(documentId: string): Promise<{ ciphertextBase64: string; ciphertextSha256: string }>;
   query(): Promise<AuditNetworkQuery>;
 }
 
@@ -69,4 +77,22 @@ export const NETWORK_SUBMITTABLE_EVENT_TYPES: ReadonlySet<string> = new Set([
   'DOCUMENT_UPLOADED',
   'DOCUMENT_ACCESSED',
   'ACCESS_REVOKED',
+]);
+
+/** TOTP event types (local-only, never submitted to Fabric). */
+export const TOTP_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'TOTP_SETUP',
+  'TOTP_VERIFIED',
+  'TOTP_LOGIN',
+  'TOTP_RECOVERY',
+  'TOTP_DISABLED',
+  'TOTP_LOGIN_FAILED',
+  'TOTP_RECOVERY_FAILED',
+]);
+
+/** One-time-code auth events (SMS OTP) - local-only, never submitted to Fabric. */
+export const SMS_OTP_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'SMS_OTP_SENT',
+  'SMS_LOGIN',
+  'SMS_LOGIN_FAILED',
 ]);

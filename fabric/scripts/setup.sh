@@ -11,20 +11,20 @@ rm -rf organizations system-genesis-block channel-artifacts
 mkdir -p organizations system-genesis-block channel-artifacts
 
 log "Generating crypto material (cryptogen)..."
-"$CRYPTOGEN" generate --config=./crypto-config.yaml --output=./organizations
+"$(tool_path cryptogen)" generate --config=./crypto-config.yaml --output=./organizations
 
 log "Generating orderer genesis block..."
-"$CONFIGTXGEN" -profile HRMSAuditGenesis -channelID syschannel -asOrg OrdererMSP \
+"$(tool_path configtxgen)" -profile HRMSAuditGenesis -channelID syschannel -asOrg OrdererMSP \
   -outputBlock ./system-genesis-block/genesis.block
 
 log "Generating channel creation transaction..."
-"$CONFIGTXGEN" -profile HRMSAuditChannel -channelID "$CHANNEL" \
+"$(tool_path configtxgen)" -profile HRMSAuditChannel -channelID "$CHANNEL" \
   -outputCreateChannelTx ./channel-artifacts/channel.tx
 
 log "Generating anchor peer update transactions..."
 for o in hr it finance admin; do
   msp="$(org_msp "$o")"
-  "$CONFIGTXGEN" -profile HRMSAuditChannel -channelID "$CHANNEL" -asOrg "$msp" \
+  "$(tool_path configtxgen)" -profile HRMSAuditChannel -channelID "$CHANNEL" -asOrg "$msp" \
     -outputAnchorPeersUpdate "./channel-artifacts/${o}-anchors.tx"
 done
 

@@ -11,7 +11,6 @@ import { encryptGcm, decryptGcm } from '../../crypto/encryption.js';
 import type { Actor } from '../../authorization.js';
 import { canAccessDocument, canManageEmployee } from '../../authorization.js';
 import type { AuditService } from '../audit/service.js';
-import { masked } from '../audit/format.js';
 
 export interface DocumentRow {
   id: string;
@@ -93,10 +92,10 @@ export class DocumentsService {
   }
 
   async upload(actor: Actor, input: UploadInput): Promise<DocumentRow> {
-    const employee = this.getEmployee(input.employeeId);
-    if (!canManageEmployee(actor, employee)) {
-      throw errors.forbidden('You may not upload documents for this employee');
+    if (actor.role !== 'ADMIN') {
+      throw errors.forbidden('Only administrators may add employee proof documents');
     }
+    this.getEmployee(input.employeeId);
     if (input.body.length === 0) throw errors.badRequest('Empty documents are not allowed');
     if (input.body.length > MAX_BYTES) throw errors.payloadTooLarge('Document exceeds 10 MB limit');
 
@@ -141,6 +140,7 @@ export class DocumentsService {
         actor.userId,
         ts,
       );
+    this.db.prepare('UPDATE employees SET version = version + 1, updated_at = ? WHERE id = ?').run(ts, input.employeeId);
 
     await this.audit.record('DOCUMENT_UPLOADED', {
       actorId: actor.userId,
@@ -150,8 +150,9 @@ export class DocumentsService {
         documentId: id,
         filename: input.filename,
         bytes: input.body.length,
-        integritySha256: masked(sealed.integritySha256),
+        integritySha256: sealed.integritySha256,
       },
+      submitToNetwork: false,
     });
     return this.getDoc(id);
   }
@@ -226,6 +227,7 @@ export class DocumentsService {
     this.db
       .prepare('UPDATE documents SET status = ?, revoked_at = ? WHERE id = ?')
       .run('REVOKED', ts, doc.id);
+    this.db.prepare('UPDATE employees SET version = version + 1, updated_at = ? WHERE id = ?').run(ts, employeeId);
 
     await this.audit.record('ACCESS_REVOKED', {
       actorId: actor.userId,

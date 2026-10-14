@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 # deploy-chaincode.sh - package, install, approve and commit the audit
 # chaincode with a 2-of-4 endorsement policy. Idempotent; upgrades the
 # chaincode definition sequence when an updated package is provided.
@@ -12,8 +12,12 @@ SIGNATURE_POLICY="OutOf(2, 'HROrgMSP.peer','ITOrgMSP.peer','FinanceOrgMSP.peer',
 PACKAGE_DIR="$ROOT_DIR/chaincode-package"
 mkdir -p "$PACKAGE_DIR"
 
-log "Installing chaincode dependencies (npm)..."
-(cd "$CHAINCODE_SRC" && npm install --omit=dev --no-audit --no-fund)
+if [ ! -d "$CHAINCODE_SRC/node_modules/fabric-contract-api" ] || [ ! -d "$CHAINCODE_SRC/node_modules/fabric-shim" ]; then
+  log "Installing chaincode dependencies (npm)..."
+  (cd "$CHAINCODE_SRC" && npm ci --omit=dev --no-audit --no-fund)
+else
+  log "Chaincode dependencies already installed."
+fi
 
 log "Packaging chaincode '$CHAINCODE_NAME'..."
 set_org_admin_env hr
@@ -22,20 +26,38 @@ pc lifecycle chaincode package /network/chaincode-package/$CHAINCODE_NAME.tgz \
   --path /chaincode \
   --label "${CHAINCODE_NAME}_${CHAINCODE_VERSION}"
 
+log "Ensuring Fabric Node chaincode runtime is available..."
+docker pull hyperledger/fabric-nodeenv:2.5
+
 for o in hr it finance admin; do
   log "Installing on $(org_dom "$o")..."
   set_org_admin_env "$o"
-  if OUT="$(pc lifecycle chaincode install /network/chaincode-package/$CHAINCODE_NAME.tgz 2>&1)" \
-     && echo "$OUT" | grep -q "already successfully installed"; then
+  if OUT="$(pc lifecycle chaincode install /network/chaincode-package/$CHAINCODE_NAME.tgz 2>&1)"; then
+    echo "$OUT" | tail -1
+  elif echo "$OUT" | grep -q "already successfully installed"; then
     echo "$OUT" | tail -1
     log "  (already installed on $(org_msp "$o"))"
   else
-    [ -n "${OUT:-}" ] && echo "$OUT" | tail -1
+    echo "$OUT" >&2
+    echo "ERROR: chaincode installation failed on $(org_msp "$o")" >&2
+    exit 1
   fi
 done
 
-PACKAGE_ID="$(pc lifecycle chaincode queryinstalled -O json 2>/dev/null \
-  | jq -r '.installed_chaincodes[] | select(.label=="'"${CHAINCODE_NAME}_${CHAINCODE_VERSION}"'") | .package_id' | head -1)"
+INSTALLED_JSON="$(pc lifecycle chaincode queryinstalled -O json 2>/dev/null)"
+PACKAGE_ID="$(printf '%s' "$INSTALLED_JSON" | node -e '
+  let input = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => input += chunk);
+  process.stdin.on("end", () => {
+    try {
+      const parsed = JSON.parse(input);
+      const label = process.argv[1];
+      const entry = (parsed.installed_chaincodes || []).find((item) => item.label === label);
+      if (entry) process.stdout.write(entry.package_id || "");
+    } catch {}
+  });
+' "${CHAINCODE_NAME}_${CHAINCODE_VERSION}")"
 if [ -z "$PACKAGE_ID" ]; then
   echo "ERROR: could not resolve package_id" >&2
   exit 1

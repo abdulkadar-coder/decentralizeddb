@@ -5,7 +5,20 @@ import { errors } from '../../errors.js';
 import type { Role } from '../../auth/tokens.js';
 import type { Actor } from '../../authorization.js';
 import { canViewEmployee, canManageEmployee, canListUnder } from '../../authorization.js';
+import { sha256Hex } from '../../crypto/integrity.js';
+import type { StorageAdapter } from '../../storage/types.js';
+import { StorageNotFoundError } from '../../storage/types.js';
 import type { AuditService } from '../audit/service.js';
+
+function employeeDetailsHash(details: {
+  fullName: string;
+  department: string;
+  title: string;
+  email: string | null;
+  managedBy: string | null;
+}): string {
+  return sha256Hex(JSON.stringify(details));
+}
 
 export interface EmployeeRow {
   id: string;
@@ -17,6 +30,7 @@ export interface EmployeeRow {
   managed_by: string | null;
   is_active: number;
   version: number;
+  ledger_version: number;
   created_at: string;
   updated_at: string;
 }
@@ -40,6 +54,7 @@ export function toEmployeePublic(row: EmployeeRow) {
     email: row.email,
     managedBy: row.managed_by,
     version: row.version,
+    ledgerVersion: row.ledger_version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -49,12 +64,13 @@ export class EmployeesService {
   constructor(
     private readonly db: Db,
     private readonly audit: AuditService,
+    private readonly storage: StorageAdapter,
   ) {}
 
   getById(id: string): EmployeeRow {
     const row = this.db
       .prepare(
-        `SELECT id, user_id, full_name, department, title, email, managed_by, is_active, version, created_at, updated_at
+        `SELECT id, user_id, full_name, department, title, email, managed_by, is_active, version, ledger_version, created_at, updated_at
          FROM employees WHERE id = ?`,
       )
       .get(id) as EmployeeRow | undefined;
@@ -107,7 +123,15 @@ export class EmployeesService {
         department: created.department,
         title: created.title,
         managedBy: created.managed_by ?? '',
+        detailsSha256: employeeDetailsHash({
+          fullName: created.full_name,
+          department: created.department,
+          title: created.title,
+          email: created.email,
+          managedBy: created.managed_by,
+        }),
       },
+      submitToNetwork: false,
     });
     return created;
   }
@@ -115,7 +139,7 @@ export class EmployeesService {
   async list(actor: Actor): Promise<EmployeeRow[]> {
     const all = this.db
       .prepare(
-        `SELECT id, user_id, full_name, department, title, email, managed_by, is_active, version, created_at, updated_at
+        `SELECT id, user_id, full_name, department, title, email, managed_by, is_active, version, ledger_version, created_at, updated_at
          FROM employees ORDER BY created_at ASC`,
       )
       .all() as unknown as EmployeeRow[];
@@ -162,9 +186,110 @@ export class EmployeesService {
       actorId: actor.userId,
       actorRole: actor.role,
       subjectId: id,
-      payload: { version: updated.version },
+      payload: {
+        version: updated.version,
+        detailsSha256: employeeDetailsHash({
+          fullName: updated.full_name,
+          department: updated.department,
+          title: updated.title,
+          email: updated.email,
+          managedBy: updated.managed_by,
+        }),
+      },
+      submitToNetwork: false,
     });
     return updated;
+  }
+
+  async submitToLedger(actor: Actor, id: string): Promise<{ eventType: 'EMPLOYEE_CREATED' | 'EMPLOYEE_UPDATED'; version: number }> {
+    if (actor.role !== 'ADMIN') throw errors.forbidden('Only administrators can submit employee details to Fabric');
+    const employee = this.getById(id);
+    if (employee.ledger_version >= employee.version) {
+      throw errors.conflict('There are no employee detail or proof changes waiting to be submitted');
+    }
+    const bridge = this.audit.networkBridge();
+    if (!bridge) throw errors.ledger('Fabric ledger is not enabled');
+    const network = await bridge.query();
+    if (!network.connected) throw errors.ledger(network.error || 'Fabric ledger is not connected');
+
+    const proofRows = this.db
+      .prepare(
+        `SELECT id, filename, content_type, size_bytes, object_key, key_id, key_version, aad_hex, integrity_sha256
+         FROM documents
+         WHERE employee_id = ? AND status = 'ACTIVE' ORDER BY id ASC`,
+      )
+      .all(id) as Array<{
+        id: string;
+        filename: string;
+        content_type: string;
+        size_bytes: number;
+        object_key: string;
+        key_id: string;
+        key_version: number;
+        aad_hex: string;
+        integrity_sha256: string;
+      }>;
+    const proofManifest: Array<{ documentId: string; ciphertextSha256: string }> = [];
+    for (const proof of proofRows) {
+      let ciphertext: Buffer;
+      try {
+        ciphertext = (await this.storage.get(proof.object_key)).body;
+      } catch (cause) {
+        if (cause instanceof StorageNotFoundError) {
+          throw errors.notFound(`Encrypted proof '${proof.filename}' is missing from document storage`);
+        }
+        throw errors.storage(`Could not read encrypted proof '${proof.filename}': ${String(cause)}`);
+      }
+      const computedIntegrity = sha256Hex(Buffer.concat([Buffer.from(proof.aad_hex, 'hex'), ciphertext]));
+      if (computedIntegrity !== proof.integrity_sha256) {
+        throw errors.crypto(`Encrypted proof '${proof.filename}' failed its integrity check`);
+      }
+      const ciphertextSha256 = sha256Hex(ciphertext);
+      const metadata = {
+        filename: proof.filename,
+        contentType: proof.content_type,
+        sizeBytes: proof.size_bytes,
+        keyId: proof.key_id,
+        keyVersion: proof.key_version,
+        aadHex: proof.aad_hex,
+        integritySha256: proof.integrity_sha256,
+        ciphertextSha256,
+      };
+      try {
+        await bridge.submitEncryptedDocument(
+          actor.userId,
+          id,
+          proof.id,
+          JSON.stringify(metadata),
+          ciphertext.toString('base64'),
+        );
+      } catch (cause) {
+        throw errors.ledger(`Encrypted proof '${proof.filename}' was not committed to Fabric: ${String(cause)}`);
+      }
+      proofManifest.push({ documentId: proof.id, ciphertextSha256 });
+    }
+    const detailsSha256 = employeeDetailsHash({
+      fullName: employee.full_name,
+      department: employee.department,
+      title: employee.title,
+      email: employee.email,
+      managedBy: employee.managed_by,
+    });
+    const eventType = employee.ledger_version === 0 ? 'EMPLOYEE_CREATED' : 'EMPLOYEE_UPDATED';
+
+    await this.audit.record(eventType, {
+      actorId: actor.userId,
+      actorRole: actor.role,
+      subjectId: id,
+      payload: {
+        version: employee.version,
+        detailsSha256,
+        proofCount: proofManifest.length,
+        proofsSha256: sha256Hex(JSON.stringify(proofManifest)),
+      },
+    });
+    this.db.prepare('UPDATE employees SET ledger_version = ? WHERE id = ?').run(employee.version, id);
+    return { eventType, version: employee.version };
   }
 
   async changeRole(actor: Actor, id: string, role: Role): Promise<EmployeeRow> {

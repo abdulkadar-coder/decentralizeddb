@@ -17,6 +17,7 @@ export async function mountEmployee(container, session, id) {
   const isAdmin = session.user.role === 'ADMIN';
   const isSelf = Boolean(employee.userId && employee.userId === session.user.id);
   const canManage = isAdmin || isSelf || session.user.role === 'MANAGER';
+  const ledgerPending = employee.ledgerVersion < employee.version;
 
   let documents = [];
   try {
@@ -47,20 +48,22 @@ export async function mountEmployee(container, session, id) {
             <dt>Reports to</dt><dd>${employee.managedBy ? escapeHtml(maskId(employee.managedBy)) : '—'}</dd>
             <dt>Linked user</dt><dd>${employee.userId ? '<span class="badge ok">linked</span>' : '<span class="badge muted">none</span>'}</dd>
             <dt>Version</dt><dd>${employee.version}</dd>
+            <dt>Fabric status</dt><dd>${ledgerPending ? '<span class="badge warn">pending admin push</span>' : '<span class="badge ok">submitted</span>'}</dd>
             <dt>Created</dt><dd class="small">${fmtDate(employee.createdAt)}</dd>
             <dt>Updated</dt><dd class="small">${fmtDate(employee.updatedAt)}</dd>
           </div>
           <div class="mt" style="display:flex;gap:10px;flex-wrap:wrap">
             ${canManage ? '<button class="btn" id="btn-edit-emp">Edit record</button>' : ''}
             ${isAdmin && employee.userId ? '<button class="btn secondary" id="btn-role-emp">Change role</button>' : ''}
+            ${isAdmin ? `<button class="btn" id="btn-push-ledger" ${ledgerPending ? '' : 'disabled'}>${ledgerPending ? 'Push details and proof to Fabric' : 'Details and proof submitted'}</button>` : ''}
           </div>
         </div>
 
         <div class="panel">
           <h2>Documents ${(documents.length ? `· ${documents.length}` : '')}</h2>
-          ${canManage ? `
-            <label class="btn secondary small" style="cursor:pointer;margin-bottom:12px">
-              Upload document
+          ${isAdmin ? `
+            <label id="doc-upload-label" class="btn secondary small" style="cursor:pointer;margin-bottom:12px">
+              Add employee proof
               <input type="file" id="doc-file" class="hidden" />
             </label>
           ` : ''}
@@ -84,7 +87,7 @@ export async function mountEmployee(container, session, id) {
                     </tr>`).join('')}
                 </tbody>
               </table>`}
-          ${canManage ? '<div class="proto-note">Uploaded bytes are encrypted before storage; downloads are decrypted and verified on every request.</div>' : ''}
+          ${canManage ? `<div class="proto-note">${isAdmin ? 'Proof hashes are submitted to Fabric only after you push the employee details. File contents remain encrypted in document storage.' : 'Uploaded bytes are encrypted before storage; downloads are decrypted and verified on every request.'}</div>` : ''}
         </div>
       </div>
     </div>
@@ -99,7 +102,7 @@ function bindDetailActions(container, session, employee, documents) {
     fileInput.addEventListener('change', async () => {
       const file = fileInput.files && fileInput.files[0];
       if (!file) return;
-      const label = container.querySelector('label[for="doc-file"]');
+      const label = container.querySelector('#doc-upload-label');
       setBusy(label, true, 'Uploading…');
       try {
         const res = await api.uploadFile(`/api/employees/${employee.id}/documents`, file);
@@ -161,6 +164,36 @@ function bindDetailActions(container, session, employee, documents) {
 
   const roleBtn = container.querySelector('#btn-role-emp');
   if (roleBtn) roleBtn.addEventListener('click', () => openRoleModal(container, session, employee));
+
+  const pushBtn = container.querySelector('#btn-push-ledger');
+  if (pushBtn) {
+    pushBtn.addEventListener('click', async () => {
+      const activeProofs = documents.filter((doc) => doc.status === 'ACTIVE');
+      const proofNames = activeProofs.map((doc) => doc.filename).join(', ') || 'None';
+      const review = [
+        'Review this employee information before committing it to Fabric:',
+        `Name: ${employee.fullName}`,
+        `Department: ${employee.department}`,
+        `Title: ${employee.title}`,
+        `Email: ${employee.email || '—'}`,
+        `Proof documents (${activeProofs.length}): ${proofNames}`,
+        'The encrypted file bytes will be stored permanently in Fabric blocks. Revoking access later cannot erase them.',
+      ].join('\n');
+      const ok = await confirmDialog(
+        review,
+      );
+      if (!ok) return;
+      setBusy(pushBtn, true, 'Pushing…');
+      try {
+        const result = await api.post(`/api/employees/${employee.id}/ledger/submit`);
+        toast(`Employee details and proof submitted to Fabric (version ${result.submission.version}).`, 'ok');
+        await mountEmployee(container, session, employee.id);
+      } catch (err) {
+        toastError(err, 'Fabric submission failed');
+        setBusy(pushBtn, false);
+      }
+    });
+  }
 
   const delBtn = container.querySelector('#btn-delete-emp');
   if (delBtn) {

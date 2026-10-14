@@ -4,6 +4,7 @@ import { requireAuth, requireRoles } from '../middleware/auth.js';
 import { validateBody, validateParam } from '../middleware/validate.js';
 import { employeeCreateSchema, employeeUpdateSchema, idSchema, roleChangeSchema } from '../validation.js';
 import { toEmployeePublic } from '../modules/employees/service.js';
+import { toAccountDirectoryView } from '../modules/users/service.js';
 
 export function employeeRoutes(ctx: AppContext): Router {
   const router = Router();
@@ -24,6 +25,26 @@ export function employeeRoutes(ctx: AppContext): Router {
     try {
       const employees = await ctx.employees.list(req.auth!);
       res.status(200).json({ employees: employees.map(toEmployeePublic) });
+    } catch (cause) {
+      next(cause);
+    }
+  });
+
+  // Account directory (role-aware): logged-in users, their roles and the
+  // tamper-evident audit proofs they authored. Must be registered before /:id.
+  router.get('/directory', async (req, res, next) => {
+    try {
+      const accounts = ctx.users.directory(req.auth!);
+      res.status(200).json({ accounts: accounts.map(toAccountDirectoryView) });
+    } catch (cause) {
+      next(cause);
+    }
+  });
+
+  router.post('/:id/ledger/submit', requireRoles('ADMIN'), validateParam(idSchema, 'id'), async (req, res, next) => {
+    try {
+      const submission = await ctx.employees.submitToLedger(req.auth!, req.params.id!);
+      res.status(200).json({ submission });
     } catch (cause) {
       next(cause);
     }

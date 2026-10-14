@@ -6,9 +6,9 @@
  *  - Every record records the transaction's cryptographic endorsement context:
  *    the submitting organization (MSP), the X509 enrollment id when present,
  *    and the Fabric transaction id + peer commit timestamp (not caller time).
- *  - Caller-supplied payload is limited in size and shape; sensitive documents
- *    and encryption keys must NEVER be written on-chain (they live encrypted
- *    in object storage). Only non-sensitive audit metadata belongs here.
+ *  - Audit payloads are limited in size and shape. Encrypted document bytes
+ *    may be stored separately in ledger state; plaintext and encryption keys
+ *    must NEVER be written on-chain.
  *  - Chaincode rejects submissions from MSPs outside the four authorized orgs.
  *  - Each record is hash-chained to the previous one (in-contract hash chain)
  *    as defense-in-depth on top of the ordering service's own block hashing.
@@ -36,12 +36,15 @@ const ALLOWED_MSP = Object.freeze([
 
 const MAX_PAYLOAD_BYTES = 4096;
 const MAX_PAYLOAD_KEYS = 12;
+const MAX_ENCRYPTED_DOCUMENT_BYTES = 10 * 1024 * 1024 + 28;
 const MAX_ID_LENGTH = 128;
 const RANGE_LIMIT = 500;
 const SEQ_KEY = 'meta:seq';
 const PREFIX = 'audit:';
 const SUBJECT_PREFIX = 'audit:subject:';
 const TYPE_PREFIX = 'audit:type:';
+const DOCUMENT_DATA_PREFIX = 'encrypted-document:';
+const DOCUMENT_RECORD_PREFIX = 'encrypted-document-record:';
 
 function toBytes(value) {
   return Buffer.from(JSON.stringify(value), 'utf8');
@@ -144,21 +147,7 @@ class HRMSAuditContract extends Contract {
     return sha256Hex(canonicalString(prev));
   }
 
-  /**
-   * Append a validated audit record. Returns the stored record.
-   * @param {Context} ctx
-   * @param {string} eventType one of ALLOWED_EVENT_TYPES
-   * @param {string} actorId business actor id (e.g. backend user id)
-   * @param {string} subjectId subject (employee id, document id, etc.)
-   * @param {string} payloadJson non-sensitive metadata (JSON object)
-   */
-  async submitAudit(ctx, eventType, actorId, subjectId, payloadJson) {
-    this._assertAuthorizedCreator(ctx);
-    this._validateEventType(eventType);
-    if (!isValidId(actorId)) throw new Error('invalid actorId');
-    if (!isValidId(subjectId)) throw new Error('invalid subjectId');
-    const payload = this._validatePayload(payloadJson);
-
+  async _appendRecord(ctx, eventType, actorId, subjectId, payload) {
     const seq = await this._readSeq(ctx) + 1;
     const ts = ctx.stub.getTxTimestamp();
     const record = {
@@ -181,8 +170,78 @@ class HRMSAuditContract extends Contract {
     await ctx.stub.putState(`${PREFIX}${seq}`, toBytes(record));
     await ctx.stub.putState(`${SUBJECT_PREFIX}${subjectId}:${seq}`, toBytes({ seq }));
     await ctx.stub.putState(`${TYPE_PREFIX}${eventType}:${seq}`, toBytes({ seq }));
-
     return record;
+  }
+
+  /**
+   * Append a validated audit record. Returns the stored record.
+   * @param {Context} ctx
+   * @param {string} eventType one of ALLOWED_EVENT_TYPES
+   * @param {string} actorId business actor id (e.g. backend user id)
+   * @param {string} subjectId subject (employee id, document id, etc.)
+   * @param {string} payloadJson non-sensitive metadata (JSON object)
+   */
+  async submitAudit(ctx, eventType, actorId, subjectId, payloadJson) {
+    this._assertAuthorizedCreator(ctx);
+    this._validateEventType(eventType);
+    if (!isValidId(actorId)) throw new Error('invalid actorId');
+    if (!isValidId(subjectId)) throw new Error('invalid subjectId');
+    const payload = this._validatePayload(payloadJson);
+
+    return this._appendRecord(ctx, eventType, actorId, subjectId, payload);
+  }
+
+  /** Store one AES-GCM ciphertext in ledger state and append its audit record atomically. */
+  async submitEncryptedDocument(ctx, actorId, employeeId, documentId, metadataJson, ciphertextBase64) {
+    this._assertAuthorizedCreator(ctx);
+    if (!isValidId(actorId)) throw new Error('invalid actorId');
+    if (!isValidId(employeeId)) throw new Error('invalid employeeId');
+    if (!isValidId(documentId)) throw new Error('invalid documentId');
+    const metadata = this._validatePayload(metadataJson);
+    if (typeof metadata.ciphertextSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(metadata.ciphertextSha256)) {
+      throw new Error('metadata must include a valid ciphertextSha256');
+    }
+    if (typeof ciphertextBase64 !== 'string') throw new Error('encrypted document must be base64 text');
+    const ciphertext = Buffer.from(ciphertextBase64, 'base64');
+    if (ciphertext.toString('base64') !== ciphertextBase64) throw new Error('encrypted document is not valid base64');
+    if (ciphertext.length < 28 || ciphertext.length > MAX_ENCRYPTED_DOCUMENT_BYTES) {
+      throw new Error(`encrypted document must be between 28 and ${MAX_ENCRYPTED_DOCUMENT_BYTES} bytes`);
+    }
+    const digest = sha256Hex(ciphertext);
+    if (digest !== metadata.ciphertextSha256) throw new Error('encrypted document digest mismatch');
+
+    const dataKey = `${DOCUMENT_DATA_PREFIX}${documentId}`;
+    const existing = await ctx.stub.getState(dataKey);
+    if (existing && existing.length > 0) {
+      if (sha256Hex(existing) !== digest) throw new Error('documentId already contains different encrypted data');
+      const seqBytes = await ctx.stub.getState(`${DOCUMENT_RECORD_PREFIX}${documentId}`);
+      if (!seqBytes || seqBytes.length === 0) throw new Error('encrypted document record index is missing');
+      const existingRecord = await this._readRecord(ctx, Number(Buffer.from(seqBytes).toString('utf8')));
+      if (!existingRecord) throw new Error('encrypted document audit record is missing');
+      return existingRecord;
+    }
+
+    const payload = {
+      ...metadata,
+      documentId,
+      ciphertextBytes: ciphertext.length,
+    };
+    this._validatePayload(JSON.stringify(payload));
+    const record = await this._appendRecord(ctx, 'DOCUMENT_UPLOADED', actorId, employeeId, payload);
+    await ctx.stub.putState(dataKey, ciphertext);
+    await ctx.stub.putState(`${DOCUMENT_RECORD_PREFIX}${documentId}`, toBytes(record.seq));
+    return record;
+  }
+
+  async queryEncryptedDocument(ctx, documentId) {
+    if (!isValidId(documentId)) throw new Error('invalid documentId');
+    const ciphertext = await ctx.stub.getState(`${DOCUMENT_DATA_PREFIX}${documentId}`);
+    if (!ciphertext || ciphertext.length === 0) throw new Error('encrypted document not found');
+    return {
+      documentId,
+      ciphertextBase64: Buffer.from(ciphertext).toString('base64'),
+      ciphertextSha256: sha256Hex(ciphertext),
+    };
   }
 
 async querySeq(ctx) {

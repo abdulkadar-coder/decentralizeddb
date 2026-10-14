@@ -40,6 +40,7 @@ describe('Phase 3 frontend delivery', () => {
       '/js/views/employees.js',
       '/js/views/employee.js',
       '/js/views/audit.js',
+      '/js/views/settings.js',
       '/css/app.css',
     ]) {
       const res = await request(app).get(asset);
